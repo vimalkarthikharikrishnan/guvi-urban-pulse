@@ -1,9 +1,9 @@
-"""Things every page of the dashboard needs: DB access, the sidebar filters and the KPI query."""
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
+import plotly.express as px
 import streamlit as st
 from sqlalchemy import text
 
@@ -13,6 +13,10 @@ from db import get_engine  # noqa: E402
 THRESHOLD_HOURS = 72   # our own cut-off for "slow", not an official standard
 FILTER_KEYS = ["flt_dates", "flt_boroughs", "flt_types"]
 
+# one calm colour set for every chart, instead of the plotly defaults
+px.defaults.color_discrete_sequence = ["#1f5f8b", "#c9763d", "#7a8b99", "#6f9a7b"]
+px.defaults.color_continuous_scale = ["#eef3f7", "#1f5f8b"]
+
 
 @st.cache_resource
 def engine():
@@ -20,7 +24,7 @@ def engine():
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def run_query(sql: str, params: dict) -> pd.DataFrame:
+def run_query(sql, params):
     with engine().connect() as conn:
         return pd.read_sql(text(sql), conn, params=params)
 
@@ -32,14 +36,14 @@ class Filters:
     summary: str
 
 
-def q(sql_with_where: str, f: Filters, extra: dict | None = None) -> pd.DataFrame:
-    """Run a query that contains the placeholder {where}."""
+def q(sql_with_where, f, extra=None):
+    # the query has {where} in it, which gets replaced by the filter text
     return run_query(sql_with_where.format(where=f.where), {**f.params, **(extra or {})})
 
 
-def setup(title: str) -> Filters:
-    """Page config, DB check and sidebar filters. Call first on every page."""
-    st.set_page_config(page_title=f"Urban Pulse | {title}", page_icon="🏙️", layout="wide")
+def setup(title):
+    # first call on every page: page title, database check and the sidebar filters
+    st.set_page_config(page_title=f"Urban Pulse - {title}", layout="wide")
     st.title(title)
 
     try:
@@ -88,19 +92,19 @@ def setup(title: str) -> Filters:
         params["types"] = sel_types
 
     summary = f"{start} to {end}"
-    summary += f" | {', '.join(sel_boroughs)}" if sel_boroughs else " | all boroughs"
-    summary += f" | {len(sel_types)} complaint types" if sel_types else " | all complaint types"
+    summary += f", {', '.join(sel_boroughs)}" if sel_boroughs else ", all boroughs"
+    summary += f", {len(sel_types)} complaint types" if sel_types else ", all complaint types"
     f = Filters(where, params, summary)
 
     n = q("SELECT COUNT(*) AS n FROM service_requests WHERE {where}", f).loc[0, "n"]
     if n == 0:
         st.warning("No requests match these filters. Widen the date range or clear a borough / complaint type.")
         st.stop()
-    st.caption(f"Filters: {summary} ({n:,} requests)")
+    st.caption(f"Showing {n:,} requests created {summary}")
     return f
 
 
-def kpis(f: Filters) -> dict:
+def kpis(f):
     row = q("""
         SELECT COUNT(DISTINCT unique_key)                       AS total,
                COUNT(*)                                          AS row_count,
@@ -120,7 +124,7 @@ def kpis(f: Filters) -> dict:
     }
 
 
-def show_kpis(k: dict) -> None:
+def show_kpis(k):
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Total requests", f"{k['total']:,}", help="Distinct request identifiers in the filtered data.")
     c2.metric("Recorded closure", f"{k['closed_pct']:.1f}%",

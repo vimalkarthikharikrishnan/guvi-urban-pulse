@@ -1,21 +1,7 @@
-"""Step 3: clean the raw NYC 311 extract, add derived fields and quality flags.
-
-Rules (from the project document):
-  * raw data is never modified; output goes to data/clean/
-  * meaningful nulls are preserved (no imputing)
-  * impossible / implausible values are FLAGGED, not silently corrected or deleted
-  * resolution_hours is derived only when creation and closure timestamps are valid
-Outputs: data/clean/nyc311_clean_<year>.csv, docs/cleaning_log.json, docs/cleaning_log.md,
-         docs/data_dictionary.md
-
-Usage:  python src/clean.py [--year 2024]
-"""
 import argparse
 import json
-import re
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -28,23 +14,26 @@ TEXT_COLS = [
 ]
 DATE_COLS = ["created_date", "closed_date", "due_date", "resolution_action_updated_date"]
 FLOAT_COLS = ["latitude", "longitude", "x_coordinate_state_plane", "y_coordinate_state_plane"]
-NYC_LAT, NYC_LON = (40.4, 41.0), (-74.3, -73.6)  # generous bounding box around the five boroughs
-THRESHOLD_HOURS = 72  # project-defined illustrative cut-off (not an official SLA)
+
+# rough box around the five boroughs
+NYC_LAT = (40.4, 41.0)
+NYC_LON = (-74.3, -73.6)
+THRESHOLD_HOURS = 72   # our own cut-off, not an official one
 
 
-def main(year: int) -> None:
+def main(year):
     raw_path = ROOT / "data" / "raw" / f"nyc311_raw_{year}.csv"
     extraction = json.loads((DOCS / "extraction_log.json").read_text())
-    extraction_date = pd.Timestamp(extraction["extraction_finished_utc"]).tz_localize(None)
+    extracted_at = pd.Timestamp(extraction["extraction_finished_utc"]).tz_localize(None)
 
     raw = pd.read_csv(raw_path, dtype="string", keep_default_na=False)
     df = raw.copy()
     log = {"input_file": str(raw_path.relative_to(ROOT)), "raw_rows": int(len(raw)), "steps": []}
 
-    def record(step, detail, n=None):
+    def add_step(step, detail, n=None):
         log["steps"].append({"step": step, "detail": detail, "rows_or_cells_affected": None if n is None else int(n)})
 
-    # ---- 1. whitespace + empty -> null (nulls are kept, never filled) --------------------
+    # 1. whitespace, then empty strings become real nulls (nothing is filled in)
     ws_changed = {}
     for col in TEXT_COLS:
         before = df[col]
@@ -52,30 +41,29 @@ def main(year: int) -> None:
         ws_changed[col] = int(((before != after) & before.notna()).sum())
         df[col] = after
     ws_changed = {k: v for k, v in ws_changed.items() if v}
-    record("Trim and collapse repeated whitespace in text fields", ws_changed, sum(ws_changed.values()))
+    add_step("Trim and collapse repeated whitespace in text fields", ws_changed, sum(ws_changed.values()))
+
     for col in TEXT_COLS + DATE_COLS + FLOAT_COLS + ["unique_key", "council_district"]:
         df[col] = df[col].replace("", pd.NA)
-    record("Empty strings converted to proper nulls (values not imputed)", "all columns")
+    add_step("Empty strings converted to proper nulls (values not imputed)", "all columns")
 
-    # ---- 2. category label normalisation -------------------------------------------------
+    # 2. same label written in different cases
     case_fixes = {}
     for col in ["complaint_type", "descriptor"]:
-        # canonical spelling = the most frequent spelling among case-insensitive matches
-        key = df[col].str.lower()
-        canon = df.groupby(key)[col].agg(lambda s: s.value_counts().idxmax())
-        new = key.map(canon).astype("string")
-        changed = int(((new != df[col]) & df[col].notna()).sum())
+        # keep the spelling that appears most often
+        lower = df[col].str.lower()
+        best = df.groupby(lower)[col].agg(lambda s: s.value_counts().idxmax())
+        new = lower.map(best).astype("string")
+        case_fixes[col] = int(((new != df[col]) & df[col].notna()).sum())
         df[col] = new.where(df[col].notna(), pd.NA)
-        case_fixes[col] = changed
     for col in ["city", "borough", "status"]:
-        new = df[col].str.upper() if col != "status" else df[col]
-        changed = int(((new != df[col]) & df[col].notna()).sum())
+        new = df[col] if col == "status" else df[col].str.upper()
+        case_fixes[col] = int(((new != df[col]) & df[col].notna()).sum())
         df[col] = new
-        case_fixes[col] = changed
-    record("Harmonised label case (complaint_type/descriptor -> most common spelling; city/borough -> UPPER)",
-           {k: v for k, v in case_fixes.items() if v}, sum(case_fixes.values()))
+    add_step("Harmonised label case (complaint_type/descriptor -> most common spelling; city/borough -> UPPER)",
+             {k: v for k, v in case_fixes.items() if v}, sum(case_fixes.values()))
 
-    # ---- 3. types ------------------------------------------------------------------------
+    # 3. types
     for col in DATE_COLS:
         df[col] = pd.to_datetime(df[col], errors="coerce")
     for col in FLOAT_COLS:
@@ -83,65 +71,68 @@ def main(year: int) -> None:
     df["council_district"] = pd.to_numeric(df["council_district"], errors="coerce").astype("Int64")
     df["unique_key"] = pd.to_numeric(df["unique_key"], errors="raise").astype("int64")
     bad_dates = {c: int(df[c].isna().sum() - raw[c].eq("").sum()) for c in DATE_COLS}
-    record("Parsed dates / coordinates / numeric ids safely (errors become null)",
-           {"unparseable_dates": bad_dates})
+    add_step("Parsed dates / coordinates / numeric ids safely (errors become null)", {"unparseable_dates": bad_dates})
 
-    # ---- 4. duplicates -------------------------------------------------------------------
+    # 4. duplicate ids
     dups = int(df["unique_key"].duplicated().sum())
     df = df.drop_duplicates("unique_key", keep="first")
-    record("Checked duplicate unique_key (duplicates dropped, first kept)", f"{dups} duplicates found", dups)
+    add_step("Checked duplicate unique_key (duplicates dropped, first kept)", f"{dups} duplicates found", dups)
 
-    # ---- 5. quality flags (flag, never silently correct) --------------------------------
-    c, cl, du = df["created_date"], df["closed_date"], df["due_date"]
-    df["flag_closed_before_created"] = cl.notna() & (cl < c)
+    # 5. flags: we mark odd values, we do not fix them
+    created, closed, due = df["created_date"], df["closed_date"], df["due_date"]
+    df["flag_closed_before_created"] = closed.notna() & (closed < created)
     df["flag_future_date"] = (
-        (c > extraction_date) | (cl > extraction_date) | (du.notna() & (du > extraction_date + pd.Timedelta(days=3650)))
+        (created > extracted_at) | (closed > extracted_at)
+        | (due.notna() & (due > extracted_at + pd.Timedelta(days=3650)))
     )
-    df["flag_status_closed_no_closed_date"] = (df["status"] == "Closed") & cl.isna()
-    df["flag_closed_date_status_not_closed"] = cl.notna() & (df["status"] != "Closed")
+    df["flag_status_closed_no_closed_date"] = (df["status"] == "Closed") & closed.isna()
+    df["flag_closed_date_status_not_closed"] = closed.notna() & (df["status"] != "Closed")
     zip_ok = df["incident_zip"].str.fullmatch(r"\d{5}")
     df["flag_invalid_zip"] = df["incident_zip"].notna() & ~zip_ok.fillna(False)
-    df["incident_zip"] = df["incident_zip"].where(~df["flag_invalid_zip"], pd.NA)  # value like 'NA' is not a ZIP
+    df["incident_zip"] = df["incident_zip"].where(~df["flag_invalid_zip"], pd.NA)   # e.g. 'NA' is not a zip
     df["flag_missing_coordinates"] = df[["latitude", "longitude"]].isna().any(axis=1)
     inside = df["latitude"].between(*NYC_LAT) & df["longitude"].between(*NYC_LON)
     df["flag_coordinates_outside_nyc"] = ~df["flag_missing_coordinates"] & ~inside
-    flag_cols = [c_ for c_ in df.columns if c_.startswith("flag_")]
-    record("Quality flags added (original values kept)", {f: int(df[f].sum()) for f in flag_cols})
-    record("Invalid ZIP values set to null and flagged", "incident_zip not 5 digits", int(df["flag_invalid_zip"].sum()))
+    flag_cols = [c for c in df.columns if c.startswith("flag_")]
+    add_step("Quality flags added (original values kept)", {f: int(df[f].sum()) for f in flag_cols})
+    add_step("Invalid ZIP values set to null and flagged", "incident_zip not 5 digits", int(df["flag_invalid_zip"].sum()))
 
-    # ---- 6. derived fields ---------------------------------------------------------------
-    df["is_closed"] = cl.notna().astype("int8")  # per project definition: recorded closed date
-    valid_res = cl.notna() & ~df["flag_closed_before_created"] & ~df["flag_future_date"]
-    df["resolution_hours"] = ((cl - c).dt.total_seconds() / 3600).where(valid_res).round(4)
-    df["is_over_72h"] = (df["resolution_hours"] > THRESHOLD_HOURS).astype("Int8").where(df["resolution_hours"].notna(), pd.NA)
-    df["created_year"] = c.dt.year.astype("int16")
-    df["created_month"] = c.dt.month.astype("int8")
-    df["created_year_month"] = c.dt.strftime("%Y-%m")
-    df["created_weekday"] = c.dt.day_name()
-    df["created_weekday_num"] = c.dt.day_of_week.astype("int8")  # Monday=0
-    df["created_hour"] = c.dt.hour.astype("int8")
-    record("Derived fields added",
-           ["is_closed", "resolution_hours (valid closed records only)", "is_over_72h",
-            "created_year", "created_month", "created_year_month", "created_weekday", "created_weekday_num", "created_hour"])
+    # 6. new columns
+    df["is_closed"] = closed.notna().astype("int8")   # closed = a closed date exists
+    valid = closed.notna() & ~df["flag_closed_before_created"] & ~df["flag_future_date"]
+    df["resolution_hours"] = ((closed - created).dt.total_seconds() / 3600).where(valid).round(4)
+    over = (df["resolution_hours"] > THRESHOLD_HOURS).astype("Int8")
+    df["is_over_72h"] = over.where(df["resolution_hours"].notna(), pd.NA)
+    df["created_year"] = created.dt.year.astype("int16")
+    df["created_month"] = created.dt.month.astype("int8")
+    df["created_year_month"] = created.dt.strftime("%Y-%m")
+    df["created_weekday"] = created.dt.day_name()
+    df["created_weekday_num"] = created.dt.day_of_week.astype("int8")   # Monday = 0
+    df["created_hour"] = created.dt.hour.astype("int8")
+    add_step("Derived fields added",
+             ["is_closed", "resolution_hours (valid closed records only)", "is_over_72h",
+              "created_year", "created_month", "created_year_month", "created_weekday",
+              "created_weekday_num", "created_hour"])
     log["resolution_hours_valid"] = int(df["resolution_hours"].notna().sum())
     log["resolution_hours_excluded"] = {
-        "no_closed_date": int(cl.isna().sum()),
+        "no_closed_date": int(closed.isna().sum()),
         "closed_before_created": int(df["flag_closed_before_created"].sum()),
-        "future_date": int((df["flag_future_date"] & cl.notna()).sum()),
+        "future_date": int((df["flag_future_date"] & closed.notna()).sum()),
     }
 
-    # ---- 7. validation -------------------------------------------------------------------
+    # 7. checks
     assert df["unique_key"].is_unique
     assert len(df) == len(raw) - dups
-    val = {
-        "raw_rows": int(len(raw)), "cleaned_rows": int(len(df)), "rows_removed": int(len(raw) - len(df)),
+    log["validation"] = {
+        "raw_rows": int(len(raw)),
+        "cleaned_rows": int(len(df)),
+        "rows_removed": int(len(raw) - len(df)),
         "unique_keys": int(df["unique_key"].nunique()),
-        "created_date_range": [str(c.min()), str(c.max())],
+        "created_date_range": [str(created.min()), str(created.max())],
         "latitude_range": [float(df["latitude"].min()), float(df["latitude"].max())],
         "longitude_range": [float(df["longitude"].min()), float(df["longitude"].max())],
         "resolution_hours_range": [float(df["resolution_hours"].min()), float(df["resolution_hours"].max())],
     }
-    log["validation"] = val
 
     out_path = ROOT / "data" / "clean" / f"nyc311_clean_{year}.csv"
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -149,7 +140,7 @@ def main(year: int) -> None:
     log["output_file"] = str(out_path.relative_to(ROOT))
     log["output_columns"] = list(df.columns)
 
-    # sample check: reload and compare with the in-memory frame
+    # read the file back to be sure it was written properly
     back = pd.read_csv(out_path, usecols=["unique_key", "resolution_hours", "is_closed"])
     assert len(back) == len(df) and back["unique_key"].is_unique
     log["validation"]["reload_check"] = "csv re-read: row count and unique_key match"
@@ -162,8 +153,9 @@ def main(year: int) -> None:
     print("valid resolution_hours:", log["resolution_hours_valid"], "| excluded:", log["resolution_hours_excluded"])
 
 
-def write_cleaning_md(log: dict, extraction: dict) -> None:
+def write_cleaning_md(log, extraction):
     v = log["validation"]
+    ex = log["resolution_hours_excluded"]
     lines = [
         "# Cleaning and validation log",
         "",
@@ -178,7 +170,7 @@ def write_cleaning_md(log: dict, extraction: dict) -> None:
         "|---|---|---|---|",
     ]
     for i, s in enumerate(log["steps"], 1):
-        detail = json.dumps(s["detail"], default=str) if not isinstance(s["detail"], str) else s["detail"]
+        detail = s["detail"] if isinstance(s["detail"], str) else json.dumps(s["detail"], default=str)
         n = "" if s["rows_or_cells_affected"] is None else f"{s['rows_or_cells_affected']:,}"
         lines.append(f"| {i} | {s['step']} | {detail.replace('|', '/')} | {n} |")
     lines += [
@@ -196,9 +188,9 @@ def write_cleaning_md(log: dict, extraction: dict) -> None:
         "",
         "## resolution_hours coverage",
         "",
-        f"Valid values: {log['resolution_hours_valid']:,}. Excluded: {log['resolution_hours_excluded']['no_closed_date']:,} with no closed date, "
-        f"{log['resolution_hours_excluded']['closed_before_created']:,} with closed date before created date (flagged, not corrected), "
-        f"{log['resolution_hours_excluded']['future_date']:,} with a date after the extraction date.",
+        f"Valid values: {log['resolution_hours_valid']:,}. Excluded: {ex['no_closed_date']:,} with no closed date, "
+        f"{ex['closed_before_created']:,} with closed date before created date (flagged, not corrected), "
+        f"{ex['future_date']:,} with a date after the extraction date.",
         "",
         "Zero-hour resolutions (closed at the creation minute) are kept: they are plausible instant closures, not errors.",
         "Rows with status = Closed but no closed date, or a closed date but a non-Closed status, are flagged; `is_closed` follows the project definition (a recorded closed date).",
@@ -207,7 +199,7 @@ def write_cleaning_md(log: dict, extraction: dict) -> None:
     (DOCS / "cleaning_log.md").write_text("\n".join(lines) + "\n")
 
 
-# (meaning, analytical use, transformation)
+# column: (meaning, analytical use, what we did to it)
 DICT = {
     "unique_key": ("Unique 311 request identifier", "Primary key; distinct request count", "Cast to integer"),
     "created_date": ("When the request was created", "Time trends, weekday/hour demand, start of resolution time", "Parsed to datetime"),
@@ -251,11 +243,21 @@ DICT = {
     "created_weekday_num": ("Weekday number, Monday=0 .. Sunday=6", "Sorting weekdays", "From created_date"),
     "created_hour": ("Hour of creation (0-23)", "Hourly demand", "From created_date"),
 }
-SQL_TYPES = lambda s: ("integer" if pd.api.types.is_integer_dtype(s) else "float" if pd.api.types.is_float_dtype(s)
-                       else "datetime" if pd.api.types.is_datetime64_any_dtype(s) else "boolean flag" if s.dtype == bool else "text")
 
 
-def write_dictionary(df: pd.DataFrame, raw: pd.DataFrame) -> None:
+def col_type(s):
+    if pd.api.types.is_integer_dtype(s):
+        return "integer"
+    if pd.api.types.is_float_dtype(s):
+        return "float"
+    if pd.api.types.is_datetime64_any_dtype(s):
+        return "datetime"
+    if s.dtype == bool:
+        return "boolean flag"
+    return "text"
+
+
+def write_dictionary(df, raw):
     n = len(df)
     lines = [
         "# Data dictionary",
@@ -269,13 +271,13 @@ def write_dictionary(df: pd.DataFrame, raw: pd.DataFrame) -> None:
     for col in df.columns:
         meaning, use, how = DICT.get(col, ("", "", ""))
         origin = "source" if col in raw.columns else "derived"
-        miss = int(df[col].isna().sum())
-        lines.append(f"| `{col}` | {origin} | {meaning} | {SQL_TYPES(df[col])} | {miss:,} ({miss / n:.1%}) | {how} | {use} |")
+        missing = int(df[col].isna().sum())
+        lines.append(f"| `{col}` | {origin} | {meaning} | {col_type(df[col])} | {missing:,} ({missing / n:.1%}) | {how} | {use} |")
     lines += ["", "Do not assume every field is populated: `due_date` is almost always empty and `location_type` is missing for about 12% of rows."]
     (DOCS / "data_dictionary.md").write_text("\n".join(lines) + "\n")
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--year", type=int, default=2024)
-    main(ap.parse_args().year)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--year", type=int, default=2024)
+    main(parser.parse_args().year)

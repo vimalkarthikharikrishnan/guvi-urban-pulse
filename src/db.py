@@ -1,4 +1,3 @@
-"""Shared database helper (PostgreSQL). Credentials come from environment variables / .env only."""
 import os
 
 from dotenv import load_dotenv
@@ -8,12 +7,8 @@ from sqlalchemy.engine import URL
 load_dotenv()
 
 
-def get_engine(database: str | None = None, **kwargs):
-    """Build a SQLAlchemy engine from .env.
-
-    database=None uses DB_NAME; pass database="postgres" to connect to the maintenance DB
-    (needed to create DB_NAME the first time).
-    """
+def get_engine(database=None, **kwargs):
+    # database=None means DB_NAME from .env; test_connection.py passes "postgres" to create it
     url = URL.create(
         "postgresql+psycopg2",
         username=os.environ["DB_USER"],

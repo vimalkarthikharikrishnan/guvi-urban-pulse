@@ -117,7 +117,7 @@ These are patterns in recorded data, so treat them as questions to ask, not conc
 - **DHS:** all 1,511 requests have status Closed but only 706 have a closed date, so the recorded closure rate (46.7%) reflects missing dates, not open work.
 - **Closed without a date:** 805 requests overall have status Closed and no closed date.
 - **Rodent:** 680 requests have a closed date equal to the created date, giving a median of 0 hours. This may be how inspection requests are recorded.
-- **One map point:** 1,701 requests share a single coordinate (655 East 230 Street, Bronx), mostly Illegal Parking. This looks like a default location, not real concentration. We have not confirmed it.
+- **One map point:** 1,701 requests share a single coordinate (655 East 230 Street, Bronx), 1,680 of them Noise - Residential. This looks like a default location, not real concentration. We have not confirmed it.
 - **Midnight bump:** more requests are created in the midnight hour than at 1 to 5 am. We have not checked whether some come with default timestamps.
 
 ## 9. Limitations

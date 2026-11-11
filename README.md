@@ -67,7 +67,7 @@ cd notebooks && ../.venv/bin/jupyter notebook eda.ipynb
 **6. Dashboard:**
 
 ```bash
-.venv/bin/streamlit run app/streamlit_app.py
+.venv/bin/streamlit run app/Overview.py
 ```
 
 If the database is not running, the dashboard shows a message instead of crashing.

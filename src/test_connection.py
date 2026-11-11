@@ -1,4 +1,3 @@
-"""Step 1 check: connect to PostgreSQL, create DB_NAME if missing, print server version."""
 import os
 import re
 import sys
@@ -12,7 +11,7 @@ if not re.fullmatch(r"[A-Za-z0-9_]+", db_name):
     sys.exit(f"Unsafe DB_NAME: {db_name!r}")
 
 try:
-    # Connect to the maintenance database first so we can create DB_NAME if needed.
+    # connect to the default "postgres" database first, so we can create ours if it is missing
     admin = get_engine(database="postgres", isolation_level="AUTOCOMMIT")
     with admin.connect() as conn:
         print("Server version:", conn.execute(text("SHOW server_version")).scalar())
@@ -27,5 +26,5 @@ try:
     with get_engine(database=db_name).connect() as conn:
         print("Connected to database:", conn.execute(text("SELECT current_database()")).scalar())
     print("OK: connection works.")
-except Exception as exc:  # show the cause without printing credentials
+except Exception as exc:   # print the error type, never the password
     sys.exit(f"Connection failed: {type(exc).__name__}: {exc}")

@@ -1,18 +1,4 @@
-"""Step 2: extract NYC 311 records from the NYC Open Data (Socrata) API.
-
-Sampling design (documented in docs/extraction_log.json):
-  * Window: one calendar year (default 2024), requested month by month.
-  * The full year has ~3.46M rows, so we keep a systematic ~3% sample: rows whose
-    unique_key ends in one of SUFFIXES (last two digits). unique_key is an
-    auto-increment id, so its last digits are unrelated to time, agency or complaint
-    type; the sample therefore spreads across every day and hour in proportion to demand.
-  * Each month is paged with $order=created_date,unique_key (deterministic, no
-    duplicate/missed rows between pages) and saved to data/raw/parts/ so a re-run resumes.
-
-Usage:  python src/extract.py [--year 2024]
-"""
 import argparse
-import calendar
 import json
 import os
 import sys
@@ -26,13 +12,13 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-BASE_URL = "https://data.cityofnewyork.us/resource/erm2-nwe9.json"
+URL = "https://data.cityofnewyork.us/resource/erm2-nwe9.json"
 ROOT = Path(__file__).resolve().parent.parent
 RAW_DIR = ROOT / "data" / "raw"
 PARTS_DIR = RAW_DIR / "parts"
 LOG_PATH = ROOT / "docs" / "extraction_log.json"
 
-# ~25 source fields, verified against the live schema (api/views/erm2-nwe9.json).
+# the 25 fields we keep from the live schema
 FIELDS = [
     "unique_key", "created_date", "closed_date", "due_date",
     "agency", "agency_name", "complaint_type", "descriptor",
@@ -41,41 +27,47 @@ FIELDS = [
     "community_board", "council_district", "police_precinct", "open_data_channel_type",
     "x_coordinate_state_plane", "y_coordinate_state_plane", "latitude", "longitude",
 ]
-SUFFIXES = ["03", "47", "81"]  # ~3 of 100 id endings => ~3% of rows
+
+# The year has about 3.46 million rows. We keep the ones whose unique_key ends in
+# 03, 47 or 81, which is about 3%. The last digits of the id have nothing to do with
+# time or complaint type, so the sample is spread evenly over the year.
+SUFFIXES = ["03", "47", "81"]
 PAGE_SIZE = 5000
 TIMEOUT = 120
 MAX_RETRIES = 6
 
 
-def get_page(session: requests.Session, params: dict) -> list[dict]:
-    """GET one page with timeout and exponential-backoff retries."""
-    last_err = None
+def get_page(session, params):
+    # try again with a longer wait each time if the API fails
+    error = None
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            resp = session.get(BASE_URL, params=params, timeout=TIMEOUT)
+            resp = session.get(URL, params=params, timeout=TIMEOUT)
             if resp.status_code == 200:
                 return resp.json()
-            last_err = f"HTTP {resp.status_code}: {resp.text[:200]}"
-        except requests.RequestException as exc:
-            last_err = f"{type(exc).__name__}: {exc}"
+            error = f"HTTP {resp.status_code}: {resp.text[:200]}"
+        except requests.RequestException as e:
+            error = f"{type(e).__name__}: {e}"
         wait = min(2 ** attempt, 60)
-        print(f"    retry {attempt}/{MAX_RETRIES} in {wait}s ({last_err})", flush=True)
+        print(f"    retry {attempt}/{MAX_RETRIES} in {wait}s ({error})", flush=True)
         time.sleep(wait)
-    raise RuntimeError(f"API request failed after {MAX_RETRIES} attempts: {last_err}")
+    raise RuntimeError(f"API request failed after {MAX_RETRIES} attempts: {error}")
 
 
-def extract_month(session: requests.Session, year: int, month: int) -> pd.DataFrame:
+def extract_month(session, year, month):
     start = f"{year}-{month:02d}-01T00:00:00"
-    nxt_y, nxt_m = (year + 1, 1) if month == 12 else (year, month + 1)
-    end = f"{nxt_y}-{nxt_m:02d}-01T00:00:00"
-    like = " OR ".join(f"unique_key like '%{s}'" for s in SUFFIXES)
-    where = f"created_date >= '{start}' AND created_date < '{end}' AND ({like})"
-    rows, offset = [], 0
+    next_year, next_month = (year + 1, 1) if month == 12 else (year, month + 1)
+    end = f"{next_year}-{next_month:02d}-01T00:00:00"
+    endings = " OR ".join(f"unique_key like '%{s}'" for s in SUFFIXES)
+    where = f"created_date >= '{start}' AND created_date < '{end}' AND ({endings})"
+
+    rows = []
+    offset = 0
     while True:
         page = get_page(session, {
             "$select": ",".join(FIELDS),
             "$where": where,
-            "$order": "created_date,unique_key",
+            "$order": "created_date,unique_key",   # fixed order so pages never overlap
             "$limit": PAGE_SIZE,
             "$offset": offset,
         })
@@ -83,15 +75,15 @@ def extract_month(session: requests.Session, year: int, month: int) -> pd.DataFr
         if len(page) < PAGE_SIZE:
             break
         offset += PAGE_SIZE
-    # Keep the raw values as returned (all strings); only enforce the column order.
+
+    # raw values stay as the API returned them (text), cleaning does the typing later
     return pd.DataFrame(rows).reindex(columns=FIELDS).astype("string")
 
 
-def main() -> None:
+def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--year", type=int, default=2024)
-    args = parser.parse_args()
-    year = args.year
+    year = parser.parse_args().year
 
     PARTS_DIR.mkdir(parents=True, exist_ok=True)
     LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -102,12 +94,14 @@ def main() -> None:
         session.headers["X-App-Token"] = token
     started = datetime.now(timezone.utc)
 
-    month_counts, resumed = {}, []
+    month_counts = {}
+    reused = []
     for month in range(1, 13):
         part = PARTS_DIR / f"{year}-{month:02d}.csv"
         if part.exists():
+            # this month was saved by an earlier run, so skip the download
             df = pd.read_csv(part, dtype="string", keep_default_na=False)
-            resumed.append(month)
+            reused.append(month)
             print(f"{year}-{month:02d}: reused existing part ({len(df):,} rows)", flush=True)
         else:
             t0 = time.time()
@@ -127,7 +121,7 @@ def main() -> None:
         "extraction_started_utc": started.isoformat(timespec="seconds"),
         "extraction_finished_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "source": "NYC Open Data 311 Service Requests from 2020 to Present (erm2-nwe9)",
-        "endpoint": BASE_URL,
+        "endpoint": URL,
         "window": {"from": f"{year}-01-01", "to": f"{year}-12-31"},
         "sampling": {
             "method": "systematic: unique_key ending in one of the listed 2-digit suffixes",
@@ -142,7 +136,7 @@ def main() -> None:
         "app_token_used": bool(token),
         "fields": FIELDS,
         "rows_per_month": month_counts,
-        "months_reused_from_previous_run": resumed,
+        "months_reused_from_previous_run": reused,
         "actual_row_count": int(len(raw)),
         "duplicate_unique_keys": dup_keys,
         "created_date_min": str(created.min()),
@@ -163,5 +157,5 @@ def main() -> None:
 if __name__ == "__main__":
     try:
         main()
-    except Exception as exc:
-        sys.exit(f"Extraction failed: {exc}")
+    except Exception as e:
+        sys.exit(f"Extraction failed: {e}")
