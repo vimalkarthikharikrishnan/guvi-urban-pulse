@@ -1,0 +1,11 @@
+pandas
+requests
+sqlalchemy
+psycopg2-binary
+python-dotenv
+scipy
+matplotlib
+plotly
+streamlit
+jupyter
+tabulate
