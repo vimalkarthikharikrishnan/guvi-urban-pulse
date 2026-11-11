@@ -20,7 +20,7 @@ px.defaults.color_continuous_scale = ["#eef3f7", "#1f5f8b"]
 
 @st.cache_resource
 def engine():
-    return get_engine(connect_args={"connect_timeout": 5})
+    return get_engine(connect_args={"connect_timeout": 15})   # a sleeping cloud database needs a few seconds to wake
 
 
 @st.cache_data(ttl=600, show_spinner=False)
