@@ -31,11 +31,12 @@ def to_records(chunk):
 
 
 def insert_batch(engine, table, rows):
-    stmt = insert(table).on_conflict_do_nothing(index_elements=["unique_key"])
     for attempt in range(1, RETRIES + 1):
         try:
             with engine.begin() as conn:   # one transaction per batch
-                conn.execute(stmt, rows)
+                # many rows per INSERT, so a remote database (cloud) needs few round trips
+                for i in range(0, len(rows), 1000):
+                    conn.execute(insert(table).values(rows[i:i + 1000]).on_conflict_do_nothing(index_elements=["unique_key"]))
             return
         except Exception as e:
             print(f"  batch failed (try {attempt}/{RETRIES}): {type(e).__name__}")
