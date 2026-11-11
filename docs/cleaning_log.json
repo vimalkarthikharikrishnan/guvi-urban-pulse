@@ -1,0 +1,153 @@
+{
+  "input_file": "data/raw/nyc311_raw_2024.csv",
+  "raw_rows": 103841,
+  "steps": [
+    {
+      "step": "Trim and collapse repeated whitespace in text fields",
+      "detail": {
+        "descriptor": 45,
+        "incident_address": 19614,
+        "resolution_description": 9025
+      },
+      "rows_or_cells_affected": 28684
+    },
+    {
+      "step": "Empty strings converted to proper nulls (values not imputed)",
+      "detail": "all columns",
+      "rows_or_cells_affected": null
+    },
+    {
+      "step": "Harmonised label case (complaint_type/descriptor -> most common spelling; city/borough -> UPPER)",
+      "detail": {
+        "complaint_type": 139,
+        "descriptor": 5,
+        "city": 12,
+        "borough": 88
+      },
+      "rows_or_cells_affected": 244
+    },
+    {
+      "step": "Parsed dates / coordinates / numeric ids safely (errors become null)",
+      "detail": {
+        "unparseable_dates": {
+          "created_date": 0,
+          "closed_date": 0,
+          "due_date": 0,
+          "resolution_action_updated_date": 0
+        }
+      },
+      "rows_or_cells_affected": null
+    },
+    {
+      "step": "Checked duplicate unique_key (duplicates dropped, first kept)",
+      "detail": "0 duplicates found",
+      "rows_or_cells_affected": 0
+    },
+    {
+      "step": "Quality flags added (original values kept)",
+      "detail": {
+        "flag_closed_before_created": 25,
+        "flag_future_date": 0,
+        "flag_status_closed_no_closed_date": 805,
+        "flag_closed_date_status_not_closed": 81,
+        "flag_invalid_zip": 1,
+        "flag_missing_coordinates": 1526,
+        "flag_coordinates_outside_nyc": 0
+      },
+      "rows_or_cells_affected": null
+    },
+    {
+      "step": "Invalid ZIP values set to null and flagged",
+      "detail": "incident_zip not 5 digits",
+      "rows_or_cells_affected": 1
+    },
+    {
+      "step": "Derived fields added",
+      "detail": [
+        "is_closed",
+        "resolution_hours (valid closed records only)",
+        "is_over_72h",
+        "created_year",
+        "created_month",
+        "created_year_month",
+        "created_weekday",
+        "created_weekday_num",
+        "created_hour"
+      ],
+      "rows_or_cells_affected": null
+    }
+  ],
+  "resolution_hours_valid": 101965,
+  "resolution_hours_excluded": {
+    "no_closed_date": 1851,
+    "closed_before_created": 25,
+    "future_date": 0
+  },
+  "validation": {
+    "raw_rows": 103841,
+    "cleaned_rows": 103841,
+    "rows_removed": 0,
+    "unique_keys": 103841,
+    "created_date_range": [
+      "2024-01-01 00:01:26",
+      "2024-12-31 23:56:59"
+    ],
+    "latitude_range": [
+      40.49965901258716,
+      40.91221758090332
+    ],
+    "longitude_range": [
+      -74.25321895301438,
+      -73.70071502508088
+    ],
+    "resolution_hours_range": [
+      0.0,
+      24242.7647
+    ],
+    "reload_check": "csv re-read: row count and unique_key match"
+  },
+  "output_file": "data/clean/nyc311_clean_2024.csv",
+  "output_columns": [
+    "unique_key",
+    "created_date",
+    "closed_date",
+    "due_date",
+    "agency",
+    "agency_name",
+    "complaint_type",
+    "descriptor",
+    "location_type",
+    "address_type",
+    "incident_zip",
+    "incident_address",
+    "city",
+    "borough",
+    "status",
+    "resolution_description",
+    "resolution_action_updated_date",
+    "community_board",
+    "council_district",
+    "police_precinct",
+    "open_data_channel_type",
+    "x_coordinate_state_plane",
+    "y_coordinate_state_plane",
+    "latitude",
+    "longitude",
+    "flag_closed_before_created",
+    "flag_future_date",
+    "flag_status_closed_no_closed_date",
+    "flag_closed_date_status_not_closed",
+    "flag_invalid_zip",
+    "flag_missing_coordinates",
+    "flag_coordinates_outside_nyc",
+    "is_closed",
+    "resolution_hours",
+    "is_over_72h",
+    "created_year",
+    "created_month",
+    "created_year_month",
+    "created_weekday",
+    "created_weekday_num",
+    "created_hour"
+  ]
+}

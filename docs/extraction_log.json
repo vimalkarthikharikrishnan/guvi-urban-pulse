@@ -1,0 +1,77 @@
+{
+  "extraction_started_utc": "2026-11-11T04:05:58+00:00",
+  "extraction_finished_utc": "2026-11-11T04:09:38+00:00",
+  "source": "NYC Open Data 311 Service Requests from 2020 to Present (erm2-nwe9)",
+  "endpoint": "https://data.cityofnewyork.us/resource/erm2-nwe9.json",
+  "window": {
+    "from": "2024-01-01",
+    "to": "2024-12-31"
+  },
+  "sampling": {
+    "method": "systematic: unique_key ending in one of the listed 2-digit suffixes",
+    "suffixes": [
+      "03",
+      "47",
+      "81"
+    ],
+    "approx_fraction_of_population": "3%",
+    "ordering": "created_date, unique_key",
+    "note": "Re-runs resume from data/raw/parts/; delete that folder to re-extract."
+  },
+  "page_size": 5000,
+  "timeout_seconds": 120,
+  "max_retries": 6,
+  "app_token_used": false,
+  "fields": [
+    "unique_key",
+    "created_date",
+    "closed_date",
+    "due_date",
+    "agency",
+    "agency_name",
+    "complaint_type",
+    "descriptor",
+    "location_type",
+    "address_type",
+    "incident_zip",
+    "incident_address",
+    "city",
+    "borough",
+    "status",
+    "resolution_description",
+    "resolution_action_updated_date",
+    "community_board",
+    "council_district",
+    "police_precinct",
+    "open_data_channel_type",
+    "x_coordinate_state_plane",
+    "y_coordinate_state_plane",
+    "latitude",
+    "longitude"
+  ],
+  "rows_per_month": {
+    "2024-01": 8610,
+    "2024-02": 7230,
+    "2024-03": 7984,
+    "2024-04": 8048,
+    "2024-05": 8536,
+    "2024-06": 9203,
+    "2024-07": 8996,
+    "2024-08": 8577,
+    "2024-09": 9232,
+    "2024-10": 9209,
+    "2024-11": 8806,
+    "2024-12": 9410
+  },
+  "months_reused_from_previous_run": [],
+  "actual_row_count": 103841,
+  "duplicate_unique_keys": 0,
+  "created_date_min": "2024-01-01 00:01:26",
+  "created_date_max": "2024-12-31 23:56:59",
+  "output_file": "data/raw/nyc311_raw_2024.csv",
+  "limitations": [
+    "Sample (~3%) of the year, not the full population; the exact count depends on API data at extraction time.",
+    "Dataset is updated daily; records can be re-opened/closed after extraction, so closed_date and status are as of the extraction date.",
+    "Raw values are kept exactly as returned (all text); typing and cleaning happen in the cleaning step."
+  ]
+}
