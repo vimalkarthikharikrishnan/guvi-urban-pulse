@@ -91,7 +91,7 @@ Full queries, charts and interpretations are in `sql/analysis.sql` and `notebook
 
 ## 6. Dashboard and KPIs
 
-The Streamlit app has date, borough and complaint-type filters, an overview page, four analyst pages, a filtered record preview, an empty-state message and a database-error message. All queries are parameterized and credentials come from `.env`.
+The dashboard is live at https://urban-pulse-guvi.streamlit.app/ (hosted on Streamlit Community Cloud, data in a hosted PostgreSQL database). It has date, borough and complaint-type filters, an overview page, four analyst pages, a filtered record preview, an empty-state message and a database-error message. All queries are parameterized and credentials come from `.env` locally and from Streamlit Secrets when hosted.
 
 | KPI | All data |
 |---|---|
@@ -144,5 +144,5 @@ See `README.md` for the run order. The extraction method, parameters and row cou
 | Data dictionary and cleaning/validation log | `docs/data_dictionary.md`, `docs/cleaning_log.md` |
 | Database schema and loading instructions | `sql/schema.sql`, `README.md`, `src/load.py` |
 | SQL queries and Python EDA for the 15 tasks | `sql/analysis.sql`, `notebooks/eda.ipynb` |
-| Streamlit app and run instructions | `app/`, `README.md` |
+| Streamlit app and run instructions | `app/`, `README.md`; live app: https://urban-pulse-guvi.streamlit.app/ |
 | Final documentation and findings | this report, `README.md`, `docs/stats_report.md` |
