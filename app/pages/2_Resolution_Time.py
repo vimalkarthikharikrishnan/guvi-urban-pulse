@@ -4,7 +4,7 @@ import streamlit as st
 
 import common
 
-MIN_CASES = 100   # groups with fewer valid cases are left out, same rule as the SQL and the notebook
+MIN_CASES = 100
 
 f = common.setup("Resolution time")
 st.caption("Analyst tasks 8 to 12, in order.")
@@ -15,7 +15,6 @@ if res.empty:
     st.warning("None of the filtered requests has a valid resolution time.")
     st.stop()
 
-# ---- task 8 ----
 st.subheader("How long requests take")
 q1, q3 = res.quantile(0.25), res.quantile(0.75)
 numbers = {
@@ -23,13 +22,11 @@ numbers = {
     "Q1 (h)": f"{q1:.2f}", "Q3 (h)": f"{q3:.1f}", "95th percentile (h)": f"{res.quantile(0.95):,.0f}",
     "max (h)": f"{res.max():,.0f}", "std dev (h)": f"{res.std():,.1f}",
 }
-# two rows of four, eight in one row are too narrow and the numbers get cut off
 items = list(numbers.items())
 for row in (items[:4], items[4:]):
     for c, (k, v) in zip(st.columns(4), row):
         c.metric(k, v)
 
-# ---- task 9 and 10 ----
 st.subheader("Median time by complaint type and by agency")
 by_type = common.q("""
     SELECT complaint_type, COUNT(resolution_hours) AS n_valid,
@@ -62,7 +59,6 @@ st.caption(f"Only groups with at least {MIN_CASES} valid cases. Agencies do diff
            "waiting time, not who performs better. A median of 0 hours (Rodent, for example) means many requests were "
            "closed in the same minute they were created.")
 
-# ---- task 11 ----
 st.subheader("Unusually long cases (IQR rule)")
 iqr = q3 - q1
 high, low = q3 + 1.5 * iqr, q1 - 1.5 * iqr
@@ -84,7 +80,6 @@ if not by_agency_out.empty:
 st.caption("Outliers are a prompt to look closer, not rows to delete. A long case can be real, like a repair or a permit. "
            "The lower fence is negative, so there are no low outliers.")
 
-# ---- task 12 ----
 st.subheader("How the times are spread")
 bands = ["under 1 hour", "1 to 4 hours", "4 to 24 hours", "1 to 3 days", "3 to 7 days", "7 to 30 days", "over 30 days"]
 counts = np.bincount(np.digitize(res, [1, 4, 24, 72, 168, 720]), minlength=7)

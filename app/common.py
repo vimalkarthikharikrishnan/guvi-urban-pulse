@@ -10,24 +10,22 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-from db import get_engine  # noqa: E402
+from db import get_engine
 
-THRESHOLD_HOURS = 72   # our own cut-off for "slow", not an official standard
+THRESHOLD_HOURS = 72
 FILTER_KEYS = ["flt_dates", "flt_boroughs", "flt_types"]
 
-# one calm colour set for every chart, instead of the plotly defaults
 px.defaults.color_discrete_sequence = ["#1f5f8b", "#c9763d", "#7a8b99", "#6f9a7b"]
 px.defaults.color_continuous_scale = ["#eef3f7", "#1f5f8b"]
 
 
 @st.cache_resource
 def engine():
-    return get_engine(connect_args={"connect_timeout": 15})   # a sleeping cloud database needs a few seconds to wake
+    return get_engine(connect_args={"connect_timeout": 15})
 
 
 @st.cache_data(ttl=600, show_spinner=False)
 def run_query(sql, params):
-    # a sleeping cloud database can refuse the first try, so wait a little and try once more
     for attempt in (1, 2):
         try:
             with engine().connect() as conn:
@@ -39,33 +37,30 @@ def run_query(sql, params):
 
 
 def fetch(sql, params):
-    # same as run_query, but shows a plain message and stops the page when the database cannot be reached
     try:
         return run_query(sql, params)
-    except (SQLAlchemyError, KeyError) as exc:   # KeyError = a connection setting is missing
+    except (SQLAlchemyError, KeyError) as exc:
         st.error("Could not reach the database, so there is nothing to show yet.")
         st.markdown("The database may be waking up (the free hosted one sleeps when idle). "
                     "Wait about 10 seconds and reload this page. If it keeps failing, check the connection settings "
                     "(`.env` when running locally, Secrets on Streamlit Cloud).")
         with st.expander("Technical detail"):
-            st.code(type(exc).__name__)   # class name only, the full message can contain the server address
+            st.code(type(exc).__name__)
         st.stop()
 
 
 @dataclass
 class Filters:
-    where: str     # e.g. "created_date >= :d0 AND ..." (only fixed text, values go in params)
+    where: str
     params: dict
     summary: str
 
 
 def q(sql_with_where, f, extra=None):
-    # the query has {where} in it, which gets replaced by the filter text
     return fetch(sql_with_where.format(where=f.where), {**f.params, **(extra or {})})
 
 
 def setup(title):
-    # first call on every page: page title, database check and the sidebar filters
     st.set_page_config(page_title=f"Urban Pulse - {title}", layout="wide")
     st.title(title)
 
@@ -75,7 +70,6 @@ def setup(title):
 
     lo, hi = bounds.loc[0, "lo"], bounds.loc[0, "hi"]
 
-    # keep the filter choices when the user moves to another page
     for k in FILTER_KEYS:
         if k in st.session_state:
             st.session_state[k] = st.session_state[k]

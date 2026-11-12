@@ -2,7 +2,7 @@ import streamlit as st
 
 import common
 
-MIN_CASES = 100   # same rule as the SQL and the notebook
+MIN_CASES = 100
 
 f = common.setup("Complaint priorities")
 st.caption("Analyst task 15.")

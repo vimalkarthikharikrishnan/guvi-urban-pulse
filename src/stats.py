@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 import matplotlib
-matplotlib.use("Agg")  # no window, just save the png files
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -15,13 +15,11 @@ FIG_DIR.mkdir(parents=True, exist_ok=True)
 
 df = pd.read_csv(CLEAN, usecols=["unique_key", "agency", "complaint_type", "borough", "resolution_hours"])
 total_rows = len(df)
-res = df["resolution_hours"].dropna()   # only rows with a valid resolution time
+res = df["resolution_hours"].dropna()
 n = len(res)
 
-# ---- central tendency and spread ----
 q1, q3 = res.quantile(0.25), res.quantile(0.75)
 iqr = q3 - q1
-# a continuous variable has no real mode, so I round to 0.1 hour first
 mode = res.round(1).mode().iloc[0]
 
 summary = {
@@ -46,11 +44,9 @@ summary = {
     "share_over_72h": (res > 72).mean(),
 }
 
-# ---- skewness again after a log transform (log1p because some values are exactly 0) ----
 log_res = np.log1p(res)
 summary["skewness_log1p"] = stats.skew(log_res)
 
-# ---- IQR outlier rule: below Q1 - 1.5*IQR or above Q3 + 1.5*IQR ----
 low_fence = q1 - 1.5 * iqr
 high_fence = q3 + 1.5 * iqr
 is_high = res > high_fence
@@ -63,7 +59,6 @@ summary.update({
     "pct_outliers": (is_high.sum() + is_low.sum()) / n,
 })
 
-# who are the outliers? compare their share with the share in all valid rows
 valid = df.dropna(subset=["resolution_hours"]).copy()
 valid["outlier"] = (valid["resolution_hours"] > high_fence) | (valid["resolution_hours"] < low_fence)
 
@@ -79,13 +74,10 @@ by_agency = outlier_table("agency")
 by_complaint = outlier_table("complaint_type")
 by_borough = outlier_table("borough")
 
-# keep the list of flagged rows so we can check them later (not deleted anywhere)
 flagged = valid.loc[valid["outlier"], ["unique_key", "agency", "complaint_type", "resolution_hours"]]
 flagged.sort_values("resolution_hours", ascending=False).to_csv(
     ROOT / "data" / "clean" / "resolution_outliers_2024.csv", index=False)
 
-# ---- charts ----
-# 1. histogram, cut at the 99th percentile otherwise one long tail squashes everything
 fig, ax = plt.subplots(figsize=(8, 4.5))
 ax.hist(res[res <= summary["p99"]], bins=60, color="#4c78a8", edgecolor="white")
 ax.axvline(summary["median"], color="#e45756", linestyle="--", label=f"median {summary['median']:.1f} h")
@@ -98,7 +90,6 @@ fig.tight_layout()
 fig.savefig(FIG_DIR / "resolution_hist.png", dpi=150)
 plt.close(fig)
 
-# 2. histogram on a log scale, easier to see the real shape
 fig, ax = plt.subplots(figsize=(8, 4.5))
 ax.hist(log_res, bins=60, color="#54a24b", edgecolor="white")
 ticks = [0, 1, 4, 24, 72, 168, 720, 8760]
@@ -111,7 +102,6 @@ fig.tight_layout()
 fig.savefig(FIG_DIR / "resolution_hist_log.png", dpi=150)
 plt.close(fig)
 
-# 3. boxplot, log axis so the box itself is readable
 fig, ax = plt.subplots(figsize=(8, 3.5))
 ax.boxplot(res + 0.01, orientation="horizontal", whis=1.5, flierprops={"markersize": 2, "alpha": 0.3})
 ax.set_xscale("log")
@@ -124,7 +114,6 @@ fig.tight_layout()
 fig.savefig(FIG_DIR / "resolution_boxplot.png", dpi=150)
 plt.close(fig)
 
-# 4. boxplot by agency (top 8 by volume), log axis
 top_agencies = valid["agency"].value_counts().head(8).index
 fig, ax = plt.subplots(figsize=(8, 4.5))
 data = [valid.loc[valid["agency"] == a, "resolution_hours"] + 0.01 for a in top_agencies]
@@ -136,7 +125,6 @@ fig.tight_layout()
 fig.savefig(FIG_DIR / "resolution_boxplot_by_agency.png", dpi=150)
 plt.close(fig)
 
-# ---- write results ----
 clean_summary = {k: (round(float(v), 4) if isinstance(v, (float, np.floating)) else int(v)) for k, v in summary.items()}
 (ROOT / "docs" / "stats_summary.json").write_text(json.dumps(clean_summary, indent=2))
 

@@ -15,10 +15,9 @@ TEXT_COLS = [
 DATE_COLS = ["created_date", "closed_date", "due_date", "resolution_action_updated_date"]
 FLOAT_COLS = ["latitude", "longitude", "x_coordinate_state_plane", "y_coordinate_state_plane"]
 
-# rough box around the five boroughs
 NYC_LAT = (40.4, 41.0)
 NYC_LON = (-74.3, -73.6)
-THRESHOLD_HOURS = 72   # our own cut-off, not an official one
+THRESHOLD_HOURS = 72
 
 
 def main(year):
@@ -33,7 +32,6 @@ def main(year):
     def add_step(step, detail, n=None):
         log["steps"].append({"step": step, "detail": detail, "rows_or_cells_affected": None if n is None else int(n)})
 
-    # 1. whitespace, then empty strings become real nulls (nothing is filled in)
     ws_changed = {}
     for col in TEXT_COLS:
         before = df[col]
@@ -47,10 +45,8 @@ def main(year):
         df[col] = df[col].replace("", pd.NA)
     add_step("Empty strings converted to proper nulls (values not imputed)", "all columns")
 
-    # 2. same label written in different cases
     case_fixes = {}
     for col in ["complaint_type", "descriptor"]:
-        # keep the spelling that appears most often
         lower = df[col].str.lower()
         best = df.groupby(lower)[col].agg(lambda s: s.value_counts().idxmax())
         new = lower.map(best).astype("string")
@@ -63,7 +59,6 @@ def main(year):
     add_step("Harmonised label case (complaint_type/descriptor -> most common spelling; city/borough -> UPPER)",
              {k: v for k, v in case_fixes.items() if v}, sum(case_fixes.values()))
 
-    # 3. types
     for col in DATE_COLS:
         df[col] = pd.to_datetime(df[col], errors="coerce")
     for col in FLOAT_COLS:
@@ -73,12 +68,10 @@ def main(year):
     bad_dates = {c: int(df[c].isna().sum() - raw[c].eq("").sum()) for c in DATE_COLS}
     add_step("Parsed dates / coordinates / numeric ids safely (errors become null)", {"unparseable_dates": bad_dates})
 
-    # 4. duplicate ids
     dups = int(df["unique_key"].duplicated().sum())
     df = df.drop_duplicates("unique_key", keep="first")
     add_step("Checked duplicate unique_key (duplicates dropped, first kept)", f"{dups} duplicates found", dups)
 
-    # 5. flags: we mark odd values, we do not fix them
     created, closed, due = df["created_date"], df["closed_date"], df["due_date"]
     df["flag_closed_before_created"] = closed.notna() & (closed < created)
     df["flag_future_date"] = (
@@ -89,7 +82,7 @@ def main(year):
     df["flag_closed_date_status_not_closed"] = closed.notna() & (df["status"] != "Closed")
     zip_ok = df["incident_zip"].str.fullmatch(r"\d{5}")
     df["flag_invalid_zip"] = df["incident_zip"].notna() & ~zip_ok.fillna(False)
-    df["incident_zip"] = df["incident_zip"].where(~df["flag_invalid_zip"], pd.NA)   # e.g. 'NA' is not a zip
+    df["incident_zip"] = df["incident_zip"].where(~df["flag_invalid_zip"], pd.NA)
     df["flag_missing_coordinates"] = df[["latitude", "longitude"]].isna().any(axis=1)
     inside = df["latitude"].between(*NYC_LAT) & df["longitude"].between(*NYC_LON)
     df["flag_coordinates_outside_nyc"] = ~df["flag_missing_coordinates"] & ~inside
@@ -97,8 +90,7 @@ def main(year):
     add_step("Quality flags added (original values kept)", {f: int(df[f].sum()) for f in flag_cols})
     add_step("Invalid ZIP values set to null and flagged", "incident_zip not 5 digits", int(df["flag_invalid_zip"].sum()))
 
-    # 6. new columns
-    df["is_closed"] = closed.notna().astype("int8")   # closed = a closed date exists
+    df["is_closed"] = closed.notna().astype("int8")
     valid = closed.notna() & ~df["flag_closed_before_created"] & ~df["flag_future_date"]
     df["resolution_hours"] = ((closed - created).dt.total_seconds() / 3600).where(valid).round(4)
     over = (df["resolution_hours"] > THRESHOLD_HOURS).astype("Int8")
@@ -107,7 +99,7 @@ def main(year):
     df["created_month"] = created.dt.month.astype("int8")
     df["created_year_month"] = created.dt.strftime("%Y-%m")
     df["created_weekday"] = created.dt.day_name()
-    df["created_weekday_num"] = created.dt.day_of_week.astype("int8")   # Monday = 0
+    df["created_weekday_num"] = created.dt.day_of_week.astype("int8")
     df["created_hour"] = created.dt.hour.astype("int8")
     add_step("Derived fields added",
              ["is_closed", "resolution_hours (valid closed records only)", "is_over_72h",
@@ -120,7 +112,6 @@ def main(year):
         "future_date": int((df["flag_future_date"] & closed.notna()).sum()),
     }
 
-    # 7. checks
     assert df["unique_key"].is_unique
     assert len(df) == len(raw) - dups
     log["validation"] = {
@@ -140,7 +131,6 @@ def main(year):
     log["output_file"] = str(out_path.relative_to(ROOT))
     log["output_columns"] = list(df.columns)
 
-    # read the file back to be sure it was written properly
     back = pd.read_csv(out_path, usecols=["unique_key", "resolution_hours", "is_closed"])
     assert len(back) == len(df) and back["unique_key"].is_unique
     log["validation"]["reload_check"] = "csv re-read: row count and unique_key match"
@@ -199,7 +189,6 @@ def write_cleaning_md(log, extraction):
     (DOCS / "cleaning_log.md").write_text("\n".join(lines) + "\n")
 
 
-# column: (meaning, analytical use, what we did to it)
 DICT = {
     "unique_key": ("Unique 311 request identifier", "Primary key; distinct request count", "Cast to integer"),
     "created_date": ("When the request was created", "Time trends, weekday/hour demand, start of resolution time", "Parsed to datetime"),
