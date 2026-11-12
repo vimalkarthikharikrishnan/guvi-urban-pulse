@@ -6,11 +6,9 @@ import common
 f = common.setup("Volume and demand")
 st.caption("Analyst tasks 1 to 7, in order.")
 
-# ---- task 1 ----
 total = common.q("SELECT COUNT(DISTINCT unique_key) AS n FROM service_requests WHERE {where}", f).loc[0, "n"]
 st.metric("Total distinct requests", f"{total:,}")
 
-# ---- task 2 and 3 ----
 col1, col2 = st.columns(2)
 with col1:
     st.subheader("Top 10 complaint types")
@@ -28,7 +26,6 @@ with col2:
         FROM service_requests WHERE {where} GROUP BY 1 ORDER BY 2 DESC""", f)
     st.plotly_chart(px.bar(ag, x="agency", y="requests", hover_data=["pct"]), width="stretch")
 
-# ---- task 4 and 5 ----
 col3, col4 = st.columns(2)
 with col3:
     st.subheader("Requests by borough")
@@ -47,7 +44,6 @@ with col4:
     st.plotly_chart(fig, width="stretch")
     st.caption("February is shorter, which explains part of its dip. One year cannot show a seasonal pattern.")
 
-# ---- task 6 ----
 grid = common.q("""
     SELECT created_weekday_num AS d, created_hour AS h, COUNT(*) AS requests
     FROM service_requests WHERE {where} GROUP BY 1, 2""", f)
@@ -70,7 +66,6 @@ peak = int(by_hour.sort_values("requests", ascending=False).iloc[0]["hour"])
 st.caption(f"Busiest day: {busiest}. Quietest day: {quietest}. Peak hour: {peak}:00. "
            "The bump at midnight may come from default timestamps, we have not checked.")
 
-# ---- task 7 ----
 st.subheader("Request status")
 stt = common.q("""
     SELECT status, COUNT(*) AS requests FROM service_requests WHERE {where}

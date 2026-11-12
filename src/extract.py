@@ -18,7 +18,6 @@ RAW_DIR = ROOT / "data" / "raw"
 PARTS_DIR = RAW_DIR / "parts"
 LOG_PATH = ROOT / "docs" / "extraction_log.json"
 
-# the 25 fields we keep from the live schema
 FIELDS = [
     "unique_key", "created_date", "closed_date", "due_date",
     "agency", "agency_name", "complaint_type", "descriptor",
@@ -28,9 +27,6 @@ FIELDS = [
     "x_coordinate_state_plane", "y_coordinate_state_plane", "latitude", "longitude",
 ]
 
-# The year has about 3.46 million rows. We keep the ones whose unique_key ends in
-# 03, 47 or 81, which is about 3%. The last digits of the id have nothing to do with
-# time or complaint type, so the sample is spread evenly over the year.
 SUFFIXES = ["03", "47", "81"]
 PAGE_SIZE = 5000
 TIMEOUT = 120
@@ -38,7 +34,6 @@ MAX_RETRIES = 6
 
 
 def get_page(session, params):
-    # try again with a longer wait each time if the API fails
     error = None
     for attempt in range(1, MAX_RETRIES + 1):
         try:
@@ -67,7 +62,7 @@ def extract_month(session, year, month):
         page = get_page(session, {
             "$select": ",".join(FIELDS),
             "$where": where,
-            "$order": "created_date,unique_key",   # fixed order so pages never overlap
+            "$order": "created_date,unique_key",
             "$limit": PAGE_SIZE,
             "$offset": offset,
         })
@@ -76,7 +71,6 @@ def extract_month(session, year, month):
             break
         offset += PAGE_SIZE
 
-    # raw values stay as the API returned them (text), cleaning does the typing later
     return pd.DataFrame(rows).reindex(columns=FIELDS).astype("string")
 
 
@@ -99,7 +93,6 @@ def main():
     for month in range(1, 13):
         part = PARTS_DIR / f"{year}-{month:02d}.csv"
         if part.exists():
-            # this month was saved by an earlier run, so skip the download
             df = pd.read_csv(part, dtype="string", keep_default_na=False)
             reused.append(month)
             print(f"{year}-{month:02d}: reused existing part ({len(df):,} rows)", flush=True)

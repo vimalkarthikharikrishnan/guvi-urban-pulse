@@ -8,7 +8,6 @@ load_dotenv()
 
 
 def get_engine(database=None, **kwargs):
-    # database=None means DB_NAME from .env; test_connection.py passes "postgres" to create it
     url = URL.create(
         "postgresql+psycopg2",
         username=os.environ["DB_USER"],

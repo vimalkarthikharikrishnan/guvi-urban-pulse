@@ -3,12 +3,11 @@ import streamlit as st
 
 import common
 
-MIN_REQUESTS = 500   # agencies with fewer requests are left out of the closure chart, same rule as the SQL
+MIN_REQUESTS = 500
 
 f = common.setup("Geography and closure")
 st.caption("Analyst tasks 13 and 14, in order.")
 
-# ---- task 13 ----
 st.subheader("Where requests are concentrated")
 cover = common.q("""
     SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE NOT flag_missing_coordinates) AS usable
@@ -34,7 +33,6 @@ else:
                "One exact point in the Bronx (655 East 230 Street) holds over 1,600 requests, almost all Noise - Residential. "
                "It looks like a default location, not real concentration, so read the busiest areas with care.")
 
-# ---- task 14 ----
 st.subheader("How many requests have a closed date")
 ag = common.q("""
     SELECT agency, COUNT(*) AS requests,

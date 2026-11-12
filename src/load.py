@@ -25,7 +25,6 @@ def read_clean():
 
 
 def to_records(chunk):
-    # pandas NaN / NaT / <NA> have to become None so postgres gets a real NULL
     chunk = chunk.astype(object).where(chunk.notna(), None)
     return chunk.to_dict("records")
 
@@ -33,8 +32,7 @@ def to_records(chunk):
 def insert_batch(engine, table, rows):
     for attempt in range(1, RETRIES + 1):
         try:
-            with engine.begin() as conn:   # one transaction per batch
-                # many rows per INSERT, so a remote database (cloud) needs few round trips
+            with engine.begin() as conn:
                 for i in range(0, len(rows), 1000):
                     conn.execute(insert(table).values(rows[i:i + 1000]).on_conflict_do_nothing(index_elements=["unique_key"]))
             return
@@ -50,7 +48,6 @@ def main():
     df = read_clean()
     print(f"read {len(df):,} rows from {CLEAN_CSV.name}")
 
-    # 1. make sure the real table exists, then build an empty staging copy
     with engine.begin() as conn:
         conn.exec_driver_sql(SCHEMA_SQL.read_text())
         conn.execute(text("DROP TABLE IF EXISTS service_requests_staging"))
@@ -60,12 +57,10 @@ def main():
     meta.reflect(bind=engine, only=["service_requests_staging"])
     staging = meta.tables["service_requests_staging"]
 
-    # 2. load into staging in batches
     for start in range(0, len(df), BATCH_SIZE):
         insert_batch(engine, staging, to_records(df.iloc[start:start + BATCH_SIZE]))
         print(f"  loaded {min(start + BATCH_SIZE, len(df)):,} / {len(df):,}")
 
-    # 3. check the staging table before touching the real one
     with engine.connect() as conn:
         staged, distinct, null_res, min_d, max_d = conn.execute(text("""
             SELECT COUNT(*), COUNT(DISTINCT unique_key), COUNT(*) - COUNT(resolution_hours),
@@ -84,14 +79,12 @@ def main():
         sys.exit("Validation failed, real table not touched: " + "; ".join(problems))
     print(f"staging OK: {staged:,} rows, {distinct:,} distinct keys, {min_d} to {max_d}")
 
-    # 4. publish in one transaction: either the new data is fully in, or nothing changes
     with engine.begin() as conn:
         conn.execute(text("TRUNCATE service_requests"))
         conn.execute(text("INSERT INTO service_requests SELECT * FROM service_requests_staging"))
         conn.execute(text("DROP TABLE service_requests_staging"))
     print("published to service_requests")
 
-    # 5. final check on the real table + a small random sample against the csv
     with engine.connect() as conn:
         final = conn.execute(text("SELECT COUNT(*) FROM service_requests")).scalar()
         sample = pd.read_sql(text("SELECT unique_key, status, borough, resolution_hours FROM service_requests "

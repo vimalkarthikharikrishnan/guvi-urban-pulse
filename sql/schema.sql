@@ -1,6 +1,3 @@
--- Schema for the Urban Pulse database (PostgreSQL)
--- Run by src/load.py, or paste into DBeaver while connected to urban_pulse_db.
-
 CREATE TABLE IF NOT EXISTS service_requests (
     unique_key                      BIGINT PRIMARY KEY,
     created_date                    TIMESTAMP NOT NULL,
@@ -28,7 +25,6 @@ CREATE TABLE IF NOT EXISTS service_requests (
     latitude                        DOUBLE PRECISION,
     longitude                       DOUBLE PRECISION,
 
-    -- quality flags
     flag_closed_before_created          BOOLEAN,
     flag_future_date                    BOOLEAN,
     flag_status_closed_no_closed_date   BOOLEAN,
@@ -37,7 +33,6 @@ CREATE TABLE IF NOT EXISTS service_requests (
     flag_missing_coordinates            BOOLEAN,
     flag_coordinates_outside_nyc        BOOLEAN,
 
-    -- derived fields
     is_closed            SMALLINT,
     resolution_hours     DOUBLE PRECISION,
     is_over_72h          SMALLINT,
