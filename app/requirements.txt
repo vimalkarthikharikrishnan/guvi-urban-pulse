@@ -1,5 +1,3 @@
-# Only what the dashboard needs, so a hosted deploy (Streamlit Community Cloud) installs quickly.
-# For the full pipeline and the notebook use the requirements.txt in the project root.
 streamlit
 pandas
 plotly
