@@ -1,4 +1,5 @@
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -6,6 +7,7 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from db import get_engine  # noqa: E402
@@ -25,8 +27,29 @@ def engine():
 
 @st.cache_data(ttl=600, show_spinner=False)
 def run_query(sql, params):
-    with engine().connect() as conn:
-        return pd.read_sql(text(sql), conn, params=params)
+    # a sleeping cloud database can refuse the first try, so wait a little and try once more
+    for attempt in (1, 2):
+        try:
+            with engine().connect() as conn:
+                return pd.read_sql(text(sql), conn, params=params)
+        except SQLAlchemyError:
+            if attempt == 2:
+                raise
+            time.sleep(5)
+
+
+def fetch(sql, params):
+    # same as run_query, but shows a plain message and stops the page when the database cannot be reached
+    try:
+        return run_query(sql, params)
+    except (SQLAlchemyError, KeyError) as exc:   # KeyError = a connection setting is missing
+        st.error("Could not reach the database, so there is nothing to show yet.")
+        st.markdown("The database may be waking up (the free hosted one sleeps when idle). "
+                    "Wait about 10 seconds and reload this page. If it keeps failing, check the connection settings "
+                    "(`.env` when running locally, Secrets on Streamlit Cloud).")
+        with st.expander("Technical detail"):
+            st.code(type(exc).__name__)   # class name only, the full message can contain the server address
+        st.stop()
 
 
 @dataclass
@@ -38,7 +61,7 @@ class Filters:
 
 def q(sql_with_where, f, extra=None):
     # the query has {where} in it, which gets replaced by the filter text
-    return run_query(sql_with_where.format(where=f.where), {**f.params, **(extra or {})})
+    return fetch(sql_with_where.format(where=f.where), {**f.params, **(extra or {})})
 
 
 def setup(title):
@@ -46,17 +69,9 @@ def setup(title):
     st.set_page_config(page_title=f"Urban Pulse - {title}", layout="wide")
     st.title(title)
 
-    try:
-        bounds = run_query("SELECT MIN(created_date)::date AS lo, MAX(created_date)::date AS hi FROM service_requests", {})
-        boroughs = run_query("SELECT DISTINCT borough FROM service_requests ORDER BY 1", {})["borough"].dropna().tolist()
-        types = run_query("SELECT complaint_type FROM service_requests GROUP BY 1 ORDER BY COUNT(*) DESC", {})["complaint_type"].tolist()
-    except Exception as exc:
-        st.error("Could not connect to the database, so there is nothing to show yet.")
-        st.markdown("Check that the Docker PostgreSQL container is running and that `.env` has the right host, port, user and password. "
-                    "Then reload this page.")
-        with st.expander("Technical detail"):
-            st.code(f"{type(exc).__name__}: {str(exc).splitlines()[0] if str(exc) else ''}")
-        st.stop()
+    bounds = fetch("SELECT MIN(created_date)::date AS lo, MAX(created_date)::date AS hi FROM service_requests", {})
+    boroughs = fetch("SELECT DISTINCT borough FROM service_requests ORDER BY 1", {})["borough"].dropna().tolist()
+    types = fetch("SELECT complaint_type FROM service_requests GROUP BY 1 ORDER BY COUNT(*) DESC", {})["complaint_type"].tolist()
 
     lo, hi = bounds.loc[0, "lo"], bounds.loc[0, "hi"]
 

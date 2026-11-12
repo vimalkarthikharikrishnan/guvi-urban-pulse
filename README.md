@@ -70,7 +70,9 @@ cd notebooks && ../.venv/bin/jupyter notebook eda.ipynb
 .venv/bin/streamlit run app/Overview.py
 ```
 
-If the database is not running, the dashboard shows a message instead of crashing.
+If the database cannot be reached, the dashboard shows a short message instead of crashing. A hosted free database sleeps when idle, so the first load can need a reload after about 10 seconds. The app tries each query twice before it gives up.
+
+**Using a hosted database (for example Neon).** Put the host, user, password and database name your provider gives you in `.env` and add `PGSSLMODE=require`; `src/load.py` then loads the data the same way. The dashboard can be deployed on Streamlit Community Cloud with `app/Overview.py` as the main file. Enter the same settings in the app's **Secrets** box (TOML, values in quotes: `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `PGSSLMODE`). Never write the password in the code, the README or the repo; `.env` and `.streamlit/secrets.toml` are git-ignored.
 
 ## Dataset and sampling
 
