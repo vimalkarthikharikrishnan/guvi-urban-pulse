@@ -2,6 +2,8 @@
 
 An end-to-end analytics project on NYC 311 service requests: pull the data from the NYC Open Data API, clean it, check the statistics, store it in a database, answer 15 analyst questions in SQL and Python, and show the results in a Streamlit dashboard with five KPIs.
 
+**Live dashboard:** https://urban-pulse-guvi.streamlit.app/
+
 Data source: [311 Service Requests from 2020 to Present](https://data.cityofnewyork.us/Social-Services/311-Service-Requests-from-2020-to-Present/erm2-nwe9) (dataset `erm2-nwe9`).
 
 > **Database note:** the project brief suggests MySQL. This version uses **PostgreSQL 18 running in Docker** (the database I had available). The schema and queries are standard SQL apart from a few PostgreSQL features (`percentile_cont`, `FILTER`, `MODE()`), which are what MySQL lacks.
