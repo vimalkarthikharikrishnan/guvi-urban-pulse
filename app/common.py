@@ -24,7 +24,7 @@ def engine():
     return get_engine(connect_args={"connect_timeout": 15})
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner="Loading data...")
 def run_query(sql, params):
     for attempt in (1, 2):
         try:
