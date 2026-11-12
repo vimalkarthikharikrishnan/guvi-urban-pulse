@@ -1,9 +1,7 @@
--- name: t01_total_volume
 SELECT COUNT(DISTINCT unique_key) AS distinct_requests,
        COUNT(*)                   AS rows_in_table
 FROM service_requests;
 
--- name: t02_top_complaints
 SELECT complaint_type,
        COUNT(*) AS requests,
        ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER (), 2) AS pct_of_all
@@ -12,7 +10,6 @@ GROUP BY complaint_type
 ORDER BY requests DESC
 LIMIT 10;
 
--- name: t03_agency_workload
 SELECT agency,
        MAX(agency_name) AS agency_name,
        COUNT(*) AS requests,
@@ -21,7 +18,6 @@ FROM service_requests
 GROUP BY agency
 ORDER BY requests DESC;
 
--- name: t04_borough_volume
 SELECT borough,
        COUNT(*) AS requests,
        ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER (), 2) AS pct_of_all
@@ -29,14 +25,12 @@ FROM service_requests
 GROUP BY borough
 ORDER BY requests DESC;
 
--- name: t05_monthly_trend
 SELECT created_year_month AS month,
        COUNT(*) AS requests
 FROM service_requests
 GROUP BY created_year_month
 ORDER BY created_year_month;
 
--- name: t06_weekday_hour
 SELECT created_weekday_num AS weekday_num,
        created_weekday     AS weekday,
        created_hour        AS hour,
@@ -45,7 +39,6 @@ FROM service_requests
 GROUP BY created_weekday_num, created_weekday, created_hour
 ORDER BY weekday_num, hour;
 
--- name: t07_status
 SELECT status,
        COUNT(*) AS requests,
        ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER (), 2) AS pct_of_all
@@ -53,7 +46,6 @@ FROM service_requests
 GROUP BY status
 ORDER BY requests DESC;
 
--- name: t08_resolution_stats
 SELECT COUNT(resolution_hours)                                          AS n_valid,
        ROUND(AVG(resolution_hours)::numeric, 2)                         AS mean_h,
        ROUND(percentile_cont(0.5)  WITHIN GROUP (ORDER BY resolution_hours)::numeric, 2) AS median_h,
@@ -66,7 +58,6 @@ SELECT COUNT(resolution_hours)                                          AS n_val
 FROM service_requests
 WHERE resolution_hours IS NOT NULL;
 
--- name: t09_median_by_complaint
 SELECT complaint_type,
        COUNT(resolution_hours) AS n_valid,
        ROUND(percentile_cont(0.5) WITHIN GROUP (ORDER BY resolution_hours)::numeric, 2) AS median_h,
@@ -77,7 +68,6 @@ GROUP BY complaint_type
 HAVING COUNT(resolution_hours) >= 100
 ORDER BY median_h DESC;
 
--- name: t10_median_by_agency
 SELECT agency,
        COUNT(resolution_hours) AS n_valid,
        ROUND(percentile_cont(0.5) WITHIN GROUP (ORDER BY resolution_hours)::numeric, 2) AS median_h,
@@ -88,7 +78,6 @@ GROUP BY agency
 HAVING COUNT(resolution_hours) >= 100
 ORDER BY median_h DESC;
 
--- name: t11_outlier_fences
 WITH q AS (
     SELECT percentile_cont(0.25) WITHIN GROUP (ORDER BY resolution_hours) AS q1,
            percentile_cont(0.75) WITHIN GROUP (ORDER BY resolution_hours) AS q3
@@ -107,7 +96,6 @@ FROM service_requests s, q
 WHERE s.resolution_hours IS NOT NULL
 GROUP BY q.q1, q.q3;
 
--- name: t11_outliers_by_agency
 WITH q AS (
     SELECT percentile_cont(0.25) WITHIN GROUP (ORDER BY resolution_hours) AS q1,
            percentile_cont(0.75) WITHIN GROUP (ORDER BY resolution_hours) AS q3
@@ -124,7 +112,6 @@ GROUP BY s.agency
 HAVING COUNT(*) >= 200
 ORDER BY high_outliers DESC;
 
--- name: t12_skewness
 WITH x AS (
     SELECT resolution_hours AS h FROM service_requests WHERE resolution_hours IS NOT NULL
 ), m AS (
@@ -136,7 +123,6 @@ SELECT ROUND((AVG(POWER(x.h - m.mean, 3)) / POWER(m.sd, 3))::numeric, 2) AS skew
 FROM x, m
 GROUP BY m.mean, m.sd;
 
--- name: t12_distribution
 SELECT CASE
            WHEN resolution_hours < 1    THEN '1) under 1 hour'
            WHEN resolution_hours < 4    THEN '2) 1 to 4 hours'
@@ -153,7 +139,6 @@ WHERE resolution_hours IS NOT NULL
 GROUP BY band
 ORDER BY band;
 
--- name: t13_geo_by_borough
 SELECT borough,
        COUNT(*) AS requests,
        COUNT(*) FILTER (WHERE NOT flag_missing_coordinates) AS with_coordinates,
@@ -162,7 +147,6 @@ FROM service_requests
 GROUP BY borough
 ORDER BY requests DESC;
 
--- name: t13_geo_hotspots
 SELECT ROUND(latitude::numeric, 2)  AS lat_cell,
        ROUND(longitude::numeric, 2) AS lon_cell,
        COUNT(*) AS requests,
@@ -174,7 +158,6 @@ GROUP BY lat_cell, lon_cell
 ORDER BY requests DESC
 LIMIT 15;
 
--- name: t13_hotspot_exact
 SELECT latitude, longitude,
        COUNT(*) AS requests,
        MODE() WITHIN GROUP (ORDER BY complaint_type) AS top_complaint,
@@ -185,7 +168,6 @@ GROUP BY latitude, longitude
 ORDER BY requests DESC
 LIMIT 5;
 
--- name: t14_closure_by_agency
 SELECT agency,
        COUNT(*) AS requests,
        SUM(is_closed) AS closed,
@@ -196,7 +178,6 @@ GROUP BY agency
 HAVING COUNT(*) >= 500
 ORDER BY closure_rate_pct;
 
--- name: t14_closure_by_borough
 SELECT borough,
        COUNT(*) AS requests,
        SUM(is_closed) AS closed,
@@ -205,7 +186,6 @@ FROM service_requests
 GROUP BY borough
 ORDER BY closure_rate_pct;
 
--- name: t15_volume_vs_resolution
 WITH per_type AS (
     SELECT complaint_type,
            COUNT(*) AS requests,
