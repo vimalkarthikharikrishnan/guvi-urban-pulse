@@ -1,7 +1,5 @@
-import argparse
 import json
 import os
-import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,6 +11,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 URL = "https://data.cityofnewyork.us/resource/erm2-nwe9.json"
+YEAR = 2024
 ROOT = Path(__file__).resolve().parent.parent
 RAW_DIR = ROOT / "data" / "raw"
 PARTS_DIR = RAW_DIR / "parts"
@@ -30,32 +29,32 @@ FIELDS = [
 SUFFIXES = ["03", "47", "81"]
 PAGE_SIZE = 5000
 TIMEOUT = 120
-MAX_RETRIES = 6
 
 
 def get_page(session, params):
-    error = None
-    for attempt in range(1, MAX_RETRIES + 1):
-        try:
-            resp = session.get(URL, params=params, timeout=TIMEOUT)
-            if resp.status_code == 200:
-                return resp.json()
-            error = f"HTTP {resp.status_code}: {resp.text[:200]}"
-        except requests.RequestException as e:
-            error = f"{type(e).__name__}: {e}"
-        wait = min(2 ** attempt, 60)
-        print(f"    retry {attempt}/{MAX_RETRIES} in {wait}s ({error})", flush=True)
-        time.sleep(wait)
-    raise RuntimeError(f"API request failed after {MAX_RETRIES} attempts: {error}")
+    resp = session.get(URL, params=params, timeout=TIMEOUT)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def make_where(year, month):
+    if month == 12:
+        next_year = year + 1
+        next_month = 1
+    else:
+        next_year = year
+        next_month = month + 1
+    start = f"{year}-{month:02d}-01T00:00:00"
+    end = f"{next_year}-{next_month:02d}-01T00:00:00"
+
+    endings = []
+    for suffix in SUFFIXES:
+        endings.append(f"unique_key like '%{suffix}'")
+    return f"created_date >= '{start}' AND created_date < '{end}' AND (" + " OR ".join(endings) + ")"
 
 
 def extract_month(session, year, month):
-    start = f"{year}-{month:02d}-01T00:00:00"
-    next_year, next_month = (year + 1, 1) if month == 12 else (year, month + 1)
-    end = f"{next_year}-{next_month:02d}-01T00:00:00"
-    endings = " OR ".join(f"unique_key like '%{s}'" for s in SUFFIXES)
-    where = f"created_date >= '{start}' AND created_date < '{end}' AND ({endings})"
-
+    where = make_where(year, month)
     rows = []
     offset = 0
     while True:
@@ -74,10 +73,31 @@ def extract_month(session, year, month):
     return pd.DataFrame(rows).reindex(columns=FIELDS).astype("string")
 
 
+def read_part(path):
+    return pd.read_csv(path, dtype="string", keep_default_na=False)
+
+
+def download_all_months(session, year):
+    month_counts = {}
+    reused = []
+    for month in range(1, 13):
+        name = f"{year}-{month:02d}"
+        part = PARTS_DIR / f"{name}.csv"
+        if part.exists():
+            df = read_part(part)
+            reused.append(month)
+            print(f"{name}: reused existing part ({len(df):,} rows)", flush=True)
+        else:
+            t0 = time.time()
+            df = extract_month(session, year, month)
+            df.to_csv(part, index=False)
+            print(f"{name}: {len(df):,} rows in {time.time() - t0:.0f}s", flush=True)
+        month_counts[name] = len(df)
+    return month_counts, reused
+
+
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--year", type=int, default=2024)
-    year = parser.parse_args().year
+    year = YEAR
 
     PARTS_DIR.mkdir(parents=True, exist_ok=True)
     LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -88,22 +108,11 @@ def main():
         session.headers["X-App-Token"] = token
     started = datetime.now(timezone.utc)
 
-    month_counts = {}
-    reused = []
-    for month in range(1, 13):
-        part = PARTS_DIR / f"{year}-{month:02d}.csv"
-        if part.exists():
-            df = pd.read_csv(part, dtype="string", keep_default_na=False)
-            reused.append(month)
-            print(f"{year}-{month:02d}: reused existing part ({len(df):,} rows)", flush=True)
-        else:
-            t0 = time.time()
-            df = extract_month(session, year, month)
-            df.to_csv(part, index=False)
-            print(f"{year}-{month:02d}: {len(df):,} rows in {time.time() - t0:.0f}s", flush=True)
-        month_counts[f"{year}-{month:02d}"] = len(df)
+    month_counts, reused = download_all_months(session, year)
 
-    parts = [pd.read_csv(p, dtype="string", keep_default_na=False) for p in sorted(PARTS_DIR.glob(f"{year}-*.csv"))]
+    parts = []
+    for path in sorted(PARTS_DIR.glob(f"{year}-*.csv")):
+        parts.append(read_part(path))
     raw = pd.concat(parts, ignore_index=True)
     dup_keys = int(raw["unique_key"].duplicated().sum())
     out_path = RAW_DIR / f"nyc311_raw_{year}.csv"
@@ -125,7 +134,6 @@ def main():
         },
         "page_size": PAGE_SIZE,
         "timeout_seconds": TIMEOUT,
-        "max_retries": MAX_RETRIES,
         "app_token_used": bool(token),
         "fields": FIELDS,
         "rows_per_month": month_counts,
@@ -148,7 +156,4 @@ def main():
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        sys.exit(f"Extraction failed: {e}")
+    main()

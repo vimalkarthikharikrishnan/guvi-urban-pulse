@@ -1,6 +1,5 @@
 import sys
 import time
-from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
@@ -49,30 +48,20 @@ def fetch(sql, params):
         st.stop()
 
 
-@dataclass
-class Filters:
-    where: str
-    params: dict
-    summary: str
-
-
 def q(sql_with_where, f, extra=None):
-    return fetch(sql_with_where.format(where=f.where), {**f.params, **(extra or {})})
+    params = dict(f["params"])
+    if extra:
+        params.update(extra)
+    return fetch(sql_with_where.format(where=f["where"]), params)
 
 
-def setup(title):
-    st.set_page_config(page_title=f"Urban Pulse - {title}", layout="wide")
-    st.title(title)
+def keep_filter_values():
+    for key in FILTER_KEYS:
+        if key in st.session_state:
+            st.session_state[key] = st.session_state[key]
 
-    bounds = fetch("SELECT MIN(created_date)::date AS lo, MAX(created_date)::date AS hi FROM service_requests", {})
-    boroughs = fetch("SELECT DISTINCT borough FROM service_requests ORDER BY 1", {})["borough"].dropna().tolist()
-    types = fetch("SELECT complaint_type FROM service_requests GROUP BY 1 ORDER BY COUNT(*) DESC", {})["complaint_type"].tolist()
 
-    lo, hi = bounds.loc[0, "lo"], bounds.loc[0, "hi"]
-
-    for k in FILTER_KEYS:
-        if k in st.session_state:
-            st.session_state[k] = st.session_state[k]
+def show_sidebar(lo, hi, boroughs, types):
     st.session_state.setdefault("flt_dates", (lo, hi))
     st.session_state.setdefault("flt_boroughs", [])
     st.session_state.setdefault("flt_types", [])
@@ -82,9 +71,23 @@ def setup(title):
     sel_boroughs = st.sidebar.multiselect("Borough (empty = all)", boroughs, key="flt_boroughs")
     sel_types = st.sidebar.multiselect("Complaint type (empty = all)", types, key="flt_types")
     if st.sidebar.button("Reset filters"):
-        for k in FILTER_KEYS:
-            del st.session_state[k]
+        for key in FILTER_KEYS:
+            del st.session_state[key]
         st.rerun()
+    return picked, sel_boroughs, sel_types
+
+
+def setup(title):
+    st.set_page_config(page_title=f"Urban Pulse - {title}", layout="wide")
+    st.title(title)
+
+    bounds = fetch("SELECT MIN(created_date)::date AS lo, MAX(created_date)::date AS hi FROM service_requests", {})
+    boroughs = fetch("SELECT DISTINCT borough FROM service_requests ORDER BY 1", {})["borough"].dropna().tolist()
+    types = fetch("SELECT complaint_type FROM service_requests GROUP BY 1 ORDER BY COUNT(*) DESC", {})["complaint_type"].tolist()
+    lo, hi = bounds.loc[0, "lo"], bounds.loc[0, "hi"]
+
+    keep_filter_values()
+    picked, sel_boroughs, sel_types = show_sidebar(lo, hi, boroughs, types)
 
     if not isinstance(picked, (tuple, list)) or len(picked) != 2:
         st.info("Pick an end date to finish the date range.")
@@ -101,9 +104,15 @@ def setup(title):
         params["types"] = sel_types
 
     summary = f"{start} to {end}"
-    summary += f", {', '.join(sel_boroughs)}" if sel_boroughs else ", all boroughs"
-    summary += f", {len(sel_types)} complaint types" if sel_types else ", all complaint types"
-    f = Filters(where, params, summary)
+    if sel_boroughs:
+        summary += ", " + ", ".join(sel_boroughs)
+    else:
+        summary += ", all boroughs"
+    if sel_types:
+        summary += f", {len(sel_types)} complaint types"
+    else:
+        summary += ", all complaint types"
+    f = {"where": where, "params": params, "summary": summary}
 
     n = q("SELECT COUNT(*) AS n FROM service_requests WHERE {where}", f).loc[0, "n"]
     if n == 0:
@@ -123,12 +132,20 @@ def kpis(f):
                COUNT(resolution_hours)                           AS n_valid,
                COUNT(*) FILTER (WHERE resolution_hours > :thr)   AS over_thr
         FROM service_requests WHERE {where}""", f, {"thr": THRESHOLD_HOURS}).iloc[0]
+    if pd.isna(row["median_h"]):
+        median_h = None
+    else:
+        median_h = float(row["median_h"])
+    if row["n_valid"] == 0:
+        over_pct = None
+    else:
+        over_pct = row["over_thr"] / row["n_valid"] * 100
     return {
         "total": int(row["total"]),
         "closed_pct": row["closed"] / row["row_count"] * 100,
         "open": int(row["open_n"]),
-        "median_h": None if pd.isna(row["median_h"]) else float(row["median_h"]),
-        "over_pct": None if row["n_valid"] == 0 else row["over_thr"] / row["n_valid"] * 100,
+        "median_h": median_h,
+        "over_pct": over_pct,
         "n_valid": int(row["n_valid"]),
     }
 
@@ -139,7 +156,15 @@ def show_kpis(k):
     c2.metric("Recorded closure", f"{k['closed_pct']:.1f}%",
               help="Share of filtered rows that have a closed date. This is not a measure of citizen satisfaction.")
     c3.metric("Open requests", f"{k['open']:,}", help="Filtered rows without a recorded closed date.")
-    c4.metric("Median resolution", "n/a" if k["median_h"] is None else f"{k['median_h']:.1f} h",
+    if k["median_h"] is None:
+        median_text = "n/a"
+    else:
+        median_text = f"{k['median_h']:.1f} h"
+    if k["over_pct"] is None:
+        over_text = "n/a"
+    else:
+        over_text = f"{k['over_pct']:.1f}%"
+    c4.metric("Median resolution", median_text,
               help=f"Median hours from created to closed, valid cases only (n = {k['n_valid']:,}).")
-    c5.metric(f"Over {THRESHOLD_HOURS} hours", "n/a" if k["over_pct"] is None else f"{k['over_pct']:.1f}%",
+    c5.metric(f"Over {THRESHOLD_HOURS} hours", over_text,
               help=f"Share of valid resolution times above {THRESHOLD_HOURS} hours. The {THRESHOLD_HOURS}-hour line is a project choice, not an official service standard.")

@@ -4,7 +4,7 @@ FROM service_requests;
 
 SELECT complaint_type,
        COUNT(*) AS requests,
-       ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER (), 2) AS pct_of_all
+       ROUND(100.0 * COUNT(*) / (SELECT COUNT(*) FROM service_requests), 2) AS pct_of_all
 FROM service_requests
 GROUP BY complaint_type
 ORDER BY requests DESC
@@ -13,14 +13,14 @@ LIMIT 10;
 SELECT agency,
        MAX(agency_name) AS agency_name,
        COUNT(*) AS requests,
-       ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER (), 2) AS pct_of_all
+       ROUND(100.0 * COUNT(*) / (SELECT COUNT(*) FROM service_requests), 2) AS pct_of_all
 FROM service_requests
 GROUP BY agency
 ORDER BY requests DESC;
 
 SELECT borough,
        COUNT(*) AS requests,
-       ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER (), 2) AS pct_of_all
+       ROUND(100.0 * COUNT(*) / (SELECT COUNT(*) FROM service_requests), 2) AS pct_of_all
 FROM service_requests
 GROUP BY borough
 ORDER BY requests DESC;
@@ -41,7 +41,7 @@ ORDER BY weekday_num, hour;
 
 SELECT status,
        COUNT(*) AS requests,
-       ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER (), 2) AS pct_of_all
+       ROUND(100.0 * COUNT(*) / (SELECT COUNT(*) FROM service_requests), 2) AS pct_of_all
 FROM service_requests
 GROUP BY status
 ORDER BY requests DESC;
@@ -133,7 +133,7 @@ SELECT CASE
            ELSE                              '7) over 30 days'
        END AS band,
        COUNT(*) AS requests,
-       ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER (), 1) AS pct
+       ROUND(100.0 * COUNT(*) / (SELECT COUNT(resolution_hours) FROM service_requests), 1) AS pct
 FROM service_requests
 WHERE resolution_hours IS NOT NULL
 GROUP BY band

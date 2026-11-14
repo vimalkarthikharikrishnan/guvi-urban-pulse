@@ -6,12 +6,24 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from scipy import stats
 
 ROOT = Path(__file__).resolve().parent.parent
 CLEAN = ROOT / "data" / "clean" / "nyc311_clean_2024.csv"
 FIG_DIR = ROOT / "docs" / "figures"
 FIG_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def skewness(values):
+    mean = values.mean()
+    spread = values.std(ddof=0)
+    return ((values - mean) ** 3).mean() / spread ** 3
+
+
+def excess_kurtosis(values):
+    mean = values.mean()
+    spread = values.std(ddof=0)
+    return ((values - mean) ** 4).mean() / spread ** 4 - 3
+
 
 df = pd.read_csv(CLEAN, usecols=["unique_key", "agency", "complaint_type", "borough", "resolution_hours"])
 total_rows = len(df)
@@ -39,13 +51,13 @@ summary = {
     "p90": res.quantile(0.90),
     "p95": res.quantile(0.95),
     "p99": res.quantile(0.99),
-    "skewness": stats.skew(res),
-    "excess_kurtosis": stats.kurtosis(res),
+    "skewness": skewness(res),
+    "excess_kurtosis": excess_kurtosis(res),
     "share_over_72h": (res > 72).mean(),
 }
 
 log_res = np.log1p(res)
-summary["skewness_log1p"] = stats.skew(log_res)
+summary["skewness_log1p"] = skewness(log_res)
 
 low_fence = q1 - 1.5 * iqr
 high_fence = q3 + 1.5 * iqr
@@ -61,6 +73,12 @@ summary.update({
 
 valid = df.dropna(subset=["resolution_hours"]).copy()
 valid["outlier"] = (valid["resolution_hours"] > high_fence) | (valid["resolution_hours"] < low_fence)
+
+
+def save_figure(fig, name):
+    fig.tight_layout()
+    fig.savefig(FIG_DIR / name, dpi=150)
+    plt.close(fig)
 
 
 def outlier_table(col, top=6):
@@ -86,9 +104,7 @@ ax.set_xlabel("resolution time (hours), values above the 99th percentile hidden"
 ax.set_ylabel("requests")
 ax.set_title("Resolution time is strongly right-skewed")
 ax.legend()
-fig.tight_layout()
-fig.savefig(FIG_DIR / "resolution_hist.png", dpi=150)
-plt.close(fig)
+save_figure(fig, "resolution_hist.png")
 
 fig, ax = plt.subplots(figsize=(8, 4.5))
 ax.hist(log_res, bins=60, color="#54a24b", edgecolor="white")
@@ -98,9 +114,7 @@ ax.set_xticklabels([str(t) for t in ticks])
 ax.set_xlabel("resolution time (hours), log scale")
 ax.set_ylabel("requests")
 ax.set_title("Resolution time after log transform")
-fig.tight_layout()
-fig.savefig(FIG_DIR / "resolution_hist_log.png", dpi=150)
-plt.close(fig)
+save_figure(fig, "resolution_hist_log.png")
 
 fig, ax = plt.subplots(figsize=(8, 3.5))
 ax.boxplot(res + 0.01, orientation="horizontal", whis=1.5, flierprops={"markersize": 2, "alpha": 0.3})
@@ -110,22 +124,25 @@ ax.set_xlabel("resolution time (hours), log axis")
 ax.set_yticks([])
 ax.set_title("Boxplot of resolution time")
 ax.legend()
-fig.tight_layout()
-fig.savefig(FIG_DIR / "resolution_boxplot.png", dpi=150)
-plt.close(fig)
+save_figure(fig, "resolution_boxplot.png")
 
 top_agencies = valid["agency"].value_counts().head(8).index
 fig, ax = plt.subplots(figsize=(8, 4.5))
-data = [valid.loc[valid["agency"] == a, "resolution_hours"] + 0.01 for a in top_agencies]
+data = []
+for agency in top_agencies:
+    data.append(valid.loc[valid["agency"] == agency, "resolution_hours"] + 0.01)
 ax.boxplot(data, tick_labels=list(top_agencies), whis=1.5, flierprops={"markersize": 2, "alpha": 0.3})
 ax.set_yscale("log")
 ax.set_ylabel("resolution time (hours), log axis")
 ax.set_title("Resolution time by agency (8 busiest)")
-fig.tight_layout()
-fig.savefig(FIG_DIR / "resolution_boxplot_by_agency.png", dpi=150)
-plt.close(fig)
+save_figure(fig, "resolution_boxplot_by_agency.png")
 
-clean_summary = {k: (round(float(v), 4) if isinstance(v, (float, np.floating)) else int(v)) for k, v in summary.items()}
+clean_summary = {}
+for key, value in summary.items():
+    if isinstance(value, (float, np.floating)):
+        clean_summary[key] = round(float(value), 4)
+    else:
+        clean_summary[key] = int(value)
 (ROOT / "docs" / "stats_summary.json").write_text(json.dumps(clean_summary, indent=2))
 
 s = summary

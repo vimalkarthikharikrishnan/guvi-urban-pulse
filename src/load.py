@@ -1,18 +1,15 @@
 import sys
-import time
 from pathlib import Path
 
 import pandas as pd
-from sqlalchemy import MetaData, text
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import text
 
 from db import get_engine
 
 ROOT = Path(__file__).resolve().parent.parent
 CLEAN_CSV = ROOT / "data" / "clean" / "nyc311_clean_2024.csv"
 SCHEMA_SQL = ROOT / "sql" / "schema.sql"
-BATCH_SIZE = 5000
-RETRIES = 3
+BATCH_SIZE = 1000
 
 DATE_COLS = ["created_date", "closed_date", "due_date", "resolution_action_updated_date"]
 
@@ -24,48 +21,26 @@ def read_clean():
     return df
 
 
-def to_records(chunk):
-    chunk = chunk.astype(object).where(chunk.notna(), None)
-    return chunk.to_dict("records")
-
-
-def insert_batch(engine, table, rows):
-    for attempt in range(1, RETRIES + 1):
-        try:
-            with engine.begin() as conn:
-                for i in range(0, len(rows), 1000):
-                    conn.execute(insert(table).values(rows[i:i + 1000]).on_conflict_do_nothing(index_elements=["unique_key"]))
-            return
-        except Exception as e:
-            print(f"  batch failed (try {attempt}/{RETRIES}): {type(e).__name__}")
-            if attempt == RETRIES:
-                raise
-            time.sleep(2 * attempt)
-
-
-def main():
-    engine = get_engine()
-    df = read_clean()
-    print(f"read {len(df):,} rows from {CLEAN_CSV.name}")
-
+def create_staging(engine):
     with engine.begin() as conn:
         conn.exec_driver_sql(SCHEMA_SQL.read_text())
         conn.execute(text("DROP TABLE IF EXISTS service_requests_staging"))
         conn.execute(text("CREATE TABLE service_requests_staging (LIKE service_requests INCLUDING ALL)"))
 
-    meta = MetaData()
-    meta.reflect(bind=engine, only=["service_requests_staging"])
-    staging = meta.tables["service_requests_staging"]
 
-    for start in range(0, len(df), BATCH_SIZE):
-        insert_batch(engine, staging, to_records(df.iloc[start:start + BATCH_SIZE]))
-        print(f"  loaded {min(start + BATCH_SIZE, len(df)):,} / {len(df):,}")
+def fill_staging(engine, df):
+    df.to_sql("service_requests_staging", engine, if_exists="append", index=False,
+              chunksize=BATCH_SIZE, method="multi")
+    print(f"  loaded {len(df):,} rows")
 
+
+def check_staging(engine, df):
     with engine.connect() as conn:
         staged, distinct, null_res, min_d, max_d = conn.execute(text("""
             SELECT COUNT(*), COUNT(DISTINCT unique_key), COUNT(*) - COUNT(resolution_hours),
                    MIN(created_date), MAX(created_date)
             FROM service_requests_staging""")).one()
+
     problems = []
     if staged != len(df):
         problems.append(f"row count: csv {len(df)} vs staging {staged}")
@@ -79,12 +54,24 @@ def main():
         sys.exit("Validation failed, real table not touched: " + "; ".join(problems))
     print(f"staging OK: {staged:,} rows, {distinct:,} distinct keys, {min_d} to {max_d}")
 
+
+def publish(engine):
     with engine.begin() as conn:
         conn.execute(text("TRUNCATE service_requests"))
         conn.execute(text("INSERT INTO service_requests SELECT * FROM service_requests_staging"))
         conn.execute(text("DROP TABLE service_requests_staging"))
     print("published to service_requests")
 
+
+def same_hours(a, b):
+    if pd.isna(a) and pd.isna(b):
+        return True
+    if pd.isna(a) or pd.isna(b):
+        return False
+    return abs(a - b) < 1e-6
+
+
+def check_final(engine, df):
     with engine.connect() as conn:
         final = conn.execute(text("SELECT COUNT(*) FROM service_requests")).scalar()
         sample = pd.read_sql(text("SELECT unique_key, status, borough, resolution_hours FROM service_requests "
@@ -97,11 +84,22 @@ def main():
     for _, r in sample.iterrows():
         c = csv_rows.loc[r["unique_key"]]
         same = (c["status"] == r["status"] and c["borough"] == r["borough"]
-                and (pd.isna(c["resolution_hours"]) and pd.isna(r["resolution_hours"])
-                     or abs(c["resolution_hours"] - r["resolution_hours"]) < 1e-6))
+                and same_hours(c["resolution_hours"], r["resolution_hours"]))
         print(f"  sample {r['unique_key']}: {'match' if same else 'MISMATCH'}")
         if not same:
             sys.exit("sample check failed")
+
+
+def main():
+    engine = get_engine()
+    df = read_clean()
+    print(f"read {len(df):,} rows from {CLEAN_CSV.name}")
+
+    create_staging(engine)
+    fill_staging(engine, df)
+    check_staging(engine, df)
+    publish(engine)
+    check_final(engine, df)
     print("done")
 
 

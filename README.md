@@ -52,7 +52,7 @@ cp .env.example .env        # then put your password in .env (this file is never
 **4. Run the pipeline in order:**
 
 ```bash
-.venv/bin/python src/extract.py --year 2024   # ~100k rows, a few minutes, no API key needed
+.venv/bin/python src/extract.py               # ~100k rows, a few minutes, no API key needed
 .venv/bin/python src/clean.py                 # writes data/clean/ + data dictionary + cleaning log
 .venv/bin/python src/stats.py                 # statistics report and charts in docs/
 .venv/bin/python src/load.py                  # loads and validates in PostgreSQL

@@ -1,4 +1,3 @@
-import argparse
 import json
 from pathlib import Path
 
@@ -6,6 +5,7 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parent.parent
 DOCS = ROOT / "docs"
+YEAR = 2024
 
 TEXT_COLS = [
     "agency", "agency_name", "complaint_type", "descriptor", "location_type", "address_type",
@@ -20,59 +20,89 @@ NYC_LON = (-74.3, -73.6)
 THRESHOLD_HOURS = 72
 
 
-def main(year):
-    raw_path = ROOT / "data" / "raw" / f"nyc311_raw_{year}.csv"
-    extraction = json.loads((DOCS / "extraction_log.json").read_text())
-    extracted_at = pd.Timestamp(extraction["extraction_finished_utc"]).tz_localize(None)
+def add_step(log, step, detail, n=None):
+    if n is not None:
+        n = int(n)
+    log["steps"].append({"step": step, "detail": detail, "rows_or_cells_affected": n})
 
-    raw = pd.read_csv(raw_path, dtype="string", keep_default_na=False)
-    df = raw.copy()
-    log = {"input_file": str(raw_path.relative_to(ROOT)), "raw_rows": int(len(raw)), "steps": []}
 
-    def add_step(step, detail, n=None):
-        log["steps"].append({"step": step, "detail": detail, "rows_or_cells_affected": None if n is None else int(n)})
-
-    ws_changed = {}
+def trim_text(df, log):
+    changed = {}
     for col in TEXT_COLS:
         before = df[col]
         after = before.str.replace(r"\s+", " ", regex=True).str.strip()
-        ws_changed[col] = int(((before != after) & before.notna()).sum())
+        count = int(((before != after) & before.notna()).sum())
+        if count > 0:
+            changed[col] = count
         df[col] = after
-    ws_changed = {k: v for k, v in ws_changed.items() if v}
-    add_step("Trim and collapse repeated whitespace in text fields", ws_changed, sum(ws_changed.values()))
+    add_step(log, "Trim and collapse repeated whitespace in text fields", changed, sum(changed.values()))
 
+
+def empty_to_null(df, log):
     for col in TEXT_COLS + DATE_COLS + FLOAT_COLS + ["unique_key", "council_district"]:
         df[col] = df[col].replace("", pd.NA)
-    add_step("Empty strings converted to proper nulls (values not imputed)", "all columns")
+    add_step(log, "Empty strings converted to proper nulls (values not imputed)", "all columns")
 
+
+def most_common_spelling(values):
+    return values.value_counts().idxmax()
+
+
+def fix_case(df, log):
     case_fixes = {}
     for col in ["complaint_type", "descriptor"]:
         lower = df[col].str.lower()
-        best = df.groupby(lower)[col].agg(lambda s: s.value_counts().idxmax())
+        best = df.groupby(lower)[col].agg(most_common_spelling)
         new = lower.map(best).astype("string")
         case_fixes[col] = int(((new != df[col]) & df[col].notna()).sum())
         df[col] = new.where(df[col].notna(), pd.NA)
-    for col in ["city", "borough", "status"]:
-        new = df[col] if col == "status" else df[col].str.upper()
+    for col in ["city", "borough"]:
+        new = df[col].str.upper()
         case_fixes[col] = int(((new != df[col]) & df[col].notna()).sum())
         df[col] = new
-    add_step("Harmonised label case (complaint_type/descriptor -> most common spelling; city/borough -> UPPER)",
-             {k: v for k, v in case_fixes.items() if v}, sum(case_fixes.values()))
 
+    changed = {}
+    for col in case_fixes:
+        if case_fixes[col] > 0:
+            changed[col] = case_fixes[col]
+    add_step(log, "Harmonised label case (complaint_type/descriptor -> most common spelling; city/borough -> UPPER)",
+             changed, sum(case_fixes.values()))
+
+
+def convert_types(df, raw, log):
     for col in DATE_COLS:
         df[col] = pd.to_datetime(df[col], errors="coerce")
     for col in FLOAT_COLS:
         df[col] = pd.to_numeric(df[col], errors="coerce")
     df["council_district"] = pd.to_numeric(df["council_district"], errors="coerce").astype("Int64")
     df["unique_key"] = pd.to_numeric(df["unique_key"], errors="raise").astype("int64")
-    bad_dates = {c: int(df[c].isna().sum() - raw[c].eq("").sum()) for c in DATE_COLS}
-    add_step("Parsed dates / coordinates / numeric ids safely (errors become null)", {"unparseable_dates": bad_dates})
 
+    bad_dates = {}
+    for col in DATE_COLS:
+        bad_dates[col] = int(df[col].isna().sum() - raw[col].eq("").sum())
+    add_step(log, "Parsed dates / coordinates / numeric ids safely (errors become null)", {"unparseable_dates": bad_dates})
+
+
+def remove_duplicates(df, log):
     dups = int(df["unique_key"].duplicated().sum())
     df = df.drop_duplicates("unique_key", keep="first")
-    add_step("Checked duplicate unique_key (duplicates dropped, first kept)", f"{dups} duplicates found", dups)
+    add_step(log, "Checked duplicate unique_key (duplicates dropped, first kept)", f"{dups} duplicates found", dups)
+    return df, dups
 
-    created, closed, due = df["created_date"], df["closed_date"], df["due_date"]
+
+def flag_columns(df):
+    flags = []
+    for col in df.columns:
+        if col.startswith("flag_"):
+            flags.append(col)
+    return flags
+
+
+def add_flags(df, extracted_at, log):
+    created = df["created_date"]
+    closed = df["closed_date"]
+    due = df["due_date"]
+
     df["flag_closed_before_created"] = closed.notna() & (closed < created)
     df["flag_future_date"] = (
         (created > extracted_at) | (closed > extracted_at)
@@ -80,15 +110,25 @@ def main(year):
     )
     df["flag_status_closed_no_closed_date"] = (df["status"] == "Closed") & closed.isna()
     df["flag_closed_date_status_not_closed"] = closed.notna() & (df["status"] != "Closed")
+
     zip_ok = df["incident_zip"].str.fullmatch(r"\d{5}")
     df["flag_invalid_zip"] = df["incident_zip"].notna() & ~zip_ok.fillna(False)
     df["incident_zip"] = df["incident_zip"].where(~df["flag_invalid_zip"], pd.NA)
+
     df["flag_missing_coordinates"] = df[["latitude", "longitude"]].isna().any(axis=1)
     inside = df["latitude"].between(*NYC_LAT) & df["longitude"].between(*NYC_LON)
     df["flag_coordinates_outside_nyc"] = ~df["flag_missing_coordinates"] & ~inside
-    flag_cols = [c for c in df.columns if c.startswith("flag_")]
-    add_step("Quality flags added (original values kept)", {f: int(df[f].sum()) for f in flag_cols})
-    add_step("Invalid ZIP values set to null and flagged", "incident_zip not 5 digits", int(df["flag_invalid_zip"].sum()))
+
+    counts = {}
+    for col in flag_columns(df):
+        counts[col] = int(df[col].sum())
+    add_step(log, "Quality flags added (original values kept)", counts)
+    add_step(log, "Invalid ZIP values set to null and flagged", "incident_zip not 5 digits", int(df["flag_invalid_zip"].sum()))
+
+
+def add_derived(df, log):
+    created = df["created_date"]
+    closed = df["closed_date"]
 
     df["is_closed"] = closed.notna().astype("int8")
     valid = closed.notna() & ~df["flag_closed_before_created"] & ~df["flag_future_date"]
@@ -101,10 +141,11 @@ def main(year):
     df["created_weekday"] = created.dt.day_name()
     df["created_weekday_num"] = created.dt.day_of_week.astype("int8")
     df["created_hour"] = created.dt.hour.astype("int8")
-    add_step("Derived fields added",
+    add_step(log, "Derived fields added",
              ["is_closed", "resolution_hours (valid closed records only)", "is_over_72h",
               "created_year", "created_month", "created_year_month", "created_weekday",
               "created_weekday_num", "created_hour"])
+
     log["resolution_hours_valid"] = int(df["resolution_hours"].notna().sum())
     log["resolution_hours_excluded"] = {
         "no_closed_date": int(closed.isna().sum()),
@@ -112,6 +153,9 @@ def main(year):
         "future_date": int((df["flag_future_date"] & closed.notna()).sum()),
     }
 
+
+def check_and_summarise(df, raw, dups, log):
+    created = df["created_date"]
     assert df["unique_key"].is_unique
     assert len(df) == len(raw) - dups
     log["validation"] = {
@@ -124,6 +168,25 @@ def main(year):
         "longitude_range": [float(df["longitude"].min()), float(df["longitude"].max())],
         "resolution_hours_range": [float(df["resolution_hours"].min()), float(df["resolution_hours"].max())],
     }
+
+
+def main(year):
+    raw_path = ROOT / "data" / "raw" / f"nyc311_raw_{year}.csv"
+    extraction = json.loads((DOCS / "extraction_log.json").read_text())
+    extracted_at = pd.Timestamp(extraction["extraction_finished_utc"]).tz_localize(None)
+
+    raw = pd.read_csv(raw_path, dtype="string", keep_default_na=False)
+    df = raw.copy()
+    log = {"input_file": str(raw_path.relative_to(ROOT)), "raw_rows": int(len(raw)), "steps": []}
+
+    trim_text(df, log)
+    empty_to_null(df, log)
+    fix_case(df, log)
+    convert_types(df, raw, log)
+    df, dups = remove_duplicates(df, log)
+    add_flags(df, extracted_at, log)
+    add_derived(df, log)
+    check_and_summarise(df, raw, dups, log)
 
     out_path = ROOT / "data" / "clean" / f"nyc311_clean_{year}.csv"
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -138,8 +201,12 @@ def main(year):
     (DOCS / "cleaning_log.json").write_text(json.dumps(log, indent=2, default=str))
     write_cleaning_md(log, extraction)
     write_dictionary(df, raw)
+
+    flag_counts = {}
+    for col in flag_columns(df):
+        flag_counts[col] = int(df[col].sum())
     print(f"raw {len(raw):,} -> clean {len(df):,} rows, {df.shape[1]} columns -> {out_path.relative_to(ROOT)}")
-    print("flags:", {f: int(df[f].sum()) for f in flag_cols})
+    print("flags:", flag_counts)
     print("valid resolution_hours:", log["resolution_hours_valid"], "| excluded:", log["resolution_hours_excluded"])
 
 
@@ -267,6 +334,4 @@ def write_dictionary(df, raw):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--year", type=int, default=2024)
-    main(parser.parse_args().year)
+    main(YEAR)

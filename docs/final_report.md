@@ -74,7 +74,7 @@ Full queries, charts and interpretations are in `sql/analysis.sql` and `notebook
 | # | Task | Result |
 |---|---|---|
 | 1 | Distinct volume | 103,841 requests |
-| 2 | Top complaints | Illegal Parking 14.7%, Residential Noise 11.0%, HEAT/HOT WATER 7.7%; top 10 are about 54% |
+| 2 | Top complaints | Illegal Parking 14.7%, Residential Noise 11.0%, HEAT/HOT WATER 7.6%; top 10 are about 54% |
 | 3 | Agency workload | NYPD 44.8%, HPD 21.2%, DSNY 8.9%; the three hold about three quarters |
 | 4 | Borough volume | Brooklyn 30.3%, Queens 23.9%, Bronx 21.5%, Manhattan 20.7%, Staten Island 3.5% |
 | 5 | Monthly trend | 7,230 (Feb, a shorter month) to 9,410 (Dec); June to December stays around 8,600 to 9,400 |

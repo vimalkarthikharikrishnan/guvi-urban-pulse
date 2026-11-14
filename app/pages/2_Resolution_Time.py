@@ -1,4 +1,3 @@
-import numpy as np
 import plotly.express as px
 import streamlit as st
 
@@ -17,15 +16,16 @@ if res.empty:
 
 st.subheader("How long requests take")
 q1, q3 = res.quantile(0.25), res.quantile(0.75)
-numbers = {
-    "valid cases": f"{len(res):,}", "mean (h)": f"{res.mean():.1f}", "median (h)": f"{res.median():.1f}",
-    "Q1 (h)": f"{q1:.2f}", "Q3 (h)": f"{q3:.1f}", "95th percentile (h)": f"{res.quantile(0.95):,.0f}",
-    "max (h)": f"{res.max():,.0f}", "std dev (h)": f"{res.std():,.1f}",
-}
-items = list(numbers.items())
-for row in (items[:4], items[4:]):
-    for c, (k, v) in zip(st.columns(4), row):
-        c.metric(k, v)
+a1, a2, a3, a4 = st.columns(4)
+a1.metric("valid cases", f"{len(res):,}")
+a2.metric("mean (h)", f"{res.mean():.1f}")
+a3.metric("median (h)", f"{res.median():.1f}")
+a4.metric("Q1 (h)", f"{q1:.2f}")
+b1, b2, b3, b4 = st.columns(4)
+b1.metric("Q3 (h)", f"{q3:.1f}")
+b2.metric("95th percentile (h)", f"{res.quantile(0.95):,.0f}")
+b3.metric("max (h)", f"{res.max():,.0f}")
+b4.metric("std dev (h)", f"{res.std():,.1f}")
 
 st.subheader("Median time by complaint type and by agency")
 by_type = common.q("""
@@ -45,7 +45,7 @@ with col1:
         st.info(f"No complaint type has {MIN_CASES} or more valid cases with these filters.")
     else:
         st.write("Slowest 12 complaint types (hours, log scale)")
-        top = by_type.head(12).iloc[::-1]
+        top = by_type.head(12).sort_values("median_h")
         fig = px.bar(top, x="median_h", y="complaint_type", orientation="h", log_x=True, hover_data=["n_valid"])
         st.plotly_chart(fig.update_layout(yaxis_title=None), width="stretch")
 with col2:
@@ -53,7 +53,7 @@ with col2:
         st.info(f"No agency has {MIN_CASES} or more valid cases with these filters.")
     else:
         st.write("Agencies (hours, log scale)")
-        fig = px.bar(by_agency.iloc[::-1], x="median_h", y="agency", orientation="h", log_x=True, hover_data=["n_valid"])
+        fig = px.bar(by_agency.sort_values("median_h"), x="median_h", y="agency", orientation="h", log_x=True, hover_data=["n_valid"])
         st.plotly_chart(fig.update_layout(yaxis_title=None), width="stretch")
 st.caption(f"Only groups with at least {MIN_CASES} valid cases. Agencies do different kinds of work, so this is about typical "
            "waiting time, not who performs better. A median of 0 hours (Rodent, for example) means many requests were "
@@ -82,7 +82,13 @@ st.caption("Outliers are a prompt to look closer, not rows to delete. A long cas
 
 st.subheader("How the times are spread")
 bands = ["under 1 hour", "1 to 4 hours", "4 to 24 hours", "1 to 3 days", "3 to 7 days", "7 to 30 days", "over 30 days"]
-counts = np.bincount(np.digitize(res, [1, 4, 24, 72, 168, 720]), minlength=7)
+limits = [1, 4, 24, 72, 168, 720]
+counts = [0] * 7
+for hours in res:
+    band = 0
+    while band < 6 and hours >= limits[band]:
+        band += 1
+    counts[band] += 1
 st.plotly_chart(px.bar(x=bands, y=counts, labels={"x": "", "y": "requests"}), width="stretch")
 st.caption(f"Skewness is {res.skew():.1f}. The mean is far above the median because a few very long cases pull it up, "
            "so the median is the better typical value.")

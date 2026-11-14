@@ -26,7 +26,7 @@ else:
         FROM service_requests WHERE {where} AND NOT flag_missing_coordinates
         GROUP BY 1, 2 ORDER BY requests DESC LIMIT 10""", f)
     hot["area"] = hot["borough"].str.title() + " (" + hot["lat_cell"].astype(str) + ", " + hot["lon_cell"].astype(str) + ")"
-    fig = px.bar(hot.iloc[::-1], x="requests", y="area", orientation="h", hover_data=["top_complaint"])
+    fig = px.bar(hot.sort_values("requests"), x="requests", y="area", orientation="h", hover_data=["top_complaint"])
     fig.update_layout(yaxis_title=None)
     st.plotly_chart(fig, width="stretch")
     st.caption("The 10 busiest grid cells (about 1 km each), with latitude and longitude. Hover to see the most common complaint. "
