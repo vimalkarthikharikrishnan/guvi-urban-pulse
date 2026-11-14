@@ -76,7 +76,7 @@ def check_final(engine, df):
         final = conn.execute(text("SELECT COUNT(*) FROM service_requests")).scalar()
         sample = pd.read_sql(text("SELECT unique_key, status, borough, resolution_hours FROM service_requests "
                                   "ORDER BY random() LIMIT 5"), conn)
-    print(f"source rows {len(df):,} | cleaned rows {len(df):,} | database rows {final:,}")
+    print(f"csv rows {len(df):,} | database rows {final:,}")
     if final != len(df):
         sys.exit("final count does not match the csv")
 

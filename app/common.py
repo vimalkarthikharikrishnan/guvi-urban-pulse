@@ -112,7 +112,7 @@ def setup(title):
         summary += f", {len(sel_types)} complaint types"
     else:
         summary += ", all complaint types"
-    f = {"where": where, "params": params, "summary": summary}
+    f = {"where": where, "params": params}
 
     n = q("SELECT COUNT(*) AS n FROM service_requests WHERE {where}", f).loc[0, "n"]
     if n == 0:

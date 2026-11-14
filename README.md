@@ -11,7 +11,7 @@ Data source: [311 Service Requests from 2020 to Present](https://data.cityofnewy
 ## What is in here
 
 ```
-src/extract.py        API extraction (paging, retries, resumable) -> data/raw/
+src/extract.py        API extraction (paging, resumable) -> data/raw/
 src/clean.py          cleaning, derived fields, quality flags -> data/clean/
 src/stats.py          descriptive statistics, skewness, IQR outliers, charts
 src/load.py           staging table -> validation -> publish to PostgreSQL
