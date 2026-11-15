@@ -251,7 +251,7 @@ def write_cleaning_md(log, extraction):
         "",
         "Zero-hour resolutions (closed at the creation minute) are kept: they are plausible instant closures, not errors.",
         "Rows with status = Closed but no closed date, or a closed date but a non-Closed status, are flagged; `is_closed` follows the project definition (a recorded closed date).",
-        "Long resolutions (several months) are kept; IQR outliers are investigated in Step 4, not deleted.",
+        "Long resolutions (several months) are kept; IQR outliers are checked in the statistics step (src/stats.py), not deleted.",
     ]
     (DOCS / "cleaning_log.md").write_text("\n".join(lines) + "\n")
 
